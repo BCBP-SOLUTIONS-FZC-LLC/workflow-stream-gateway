@@ -1,0 +1,50 @@
+{{- $httpRouteEnabled := and .Values.ingress.enabled (eq (.Values.ingress.type | default "Ingress") "HTTPRoute") }}
+{{- if and $httpRouteEnabled .Values.ingress.securityPolicy.enabled .Values.ingress.securityPolicy.cors.enabled }}
+# Envoy Gateway SecurityPolicy — attaches CORS to the HTTPRoute at the
+# gateway layer. Requires Envoy Gateway v0.6+ (gateway.envoyproxy.io/v1alpha1 CRD).
+#
+# Rate limiting is deliberately NOT configured here: Envoy Gateway exposes
+# it via a separate BackendTrafficPolicy CRD, not a `rateLimit` field on
+# SecurityPolicy — confirmed via kubeconform schema validation, which
+# rejects `spec.rateLimit` on this CRD. definition_service's and
+# iam-user-profile's own securitypolicy.yaml both carry that same
+# incorrect field (harmless only because it's disabled by default in both);
+# not fixed here since it's out of scope for this repo, but worth knowing.
+# Add a proper templates/backendtrafficpolicy.yaml if/when rate limiting
+# is actually needed for this service.
+#
+# This resource only ever configures CORS — JWT/ext_authz validation, and
+# GET /api/v1/stream's carve-out from it, are Gateway-level concerns
+# entirely outside this chart (LLD §5.2/§10.3, Appendix B).
+#
+# NOTE: CORS allowHeaders deliberately excludes X-Tenant-ID / X-User-ID — those are
+# injected by the Envoy Gateway's ext_authz filter after JWT validation, never sent
+# by the browser client itself.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ include "workflow-stream-gateway.fullname" . }}
+  labels:
+    {{- include "workflow-stream-gateway.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: {{ include "workflow-stream-gateway.fullname" . }}
+  cors:
+    # Rendered as `[]`, never a bare `allowOrigins:` key with nothing
+    # under it, when the list is empty — the latter is null, not an
+    # empty array, and fails the CRD's schema (verified via kubeconform).
+    allowOrigins: {{ if .Values.ingress.securityPolicy.cors.allowOrigins }}
+      {{- range .Values.ingress.securityPolicy.cors.allowOrigins }}
+      - type: Exact
+        value: {{ . | quote }}
+      {{- end }}
+    {{- else }} []
+    {{- end }}
+    allowMethods:
+      {{- toYaml .Values.ingress.securityPolicy.cors.allowMethods | nindent 6 }}
+    allowHeaders:
+      {{- toYaml .Values.ingress.securityPolicy.cors.allowHeaders | nindent 6 }}
+    maxAge: {{ .Values.ingress.securityPolicy.cors.maxAge | quote }}
+{{- end }}

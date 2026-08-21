@@ -12,6 +12,7 @@ This service is stateless — Valkey is its only store (tickets, per-user event 
 |---|---|---|
 | `APP_ENV` | `dev` | `prod` enforces `WORKFLOW_STREAM_GATEWAY_TOKEN` non-empty |
 | `HTTP_PORT` | `8080` | |
+| `METRICS_PORT` | `9090` | `/metrics`, on a separate listener from the API port — NetworkPolicy scopes each independently |
 | `VALKEY_ADDR` | `localhost:6379` | |
 | `VALKEY_PASSWORD` | (empty) | |
 | `VALKEY_DIAL_TIMEOUT` / `VALKEY_READ_TIMEOUT` / `VALKEY_WRITE_TIMEOUT` | `2s` / `1s` / `1s` | |
@@ -50,4 +51,10 @@ Run `make help` for the full list — `check` (fmt + lint + arch-lint + vet + co
 
 ## Deployment
 
-`deploy/helm/` — Helm chart. `GET /api/v1/stream` and `POST /internal/events` are intentionally not exposed through the standard `HTTPRoute` (LLD §5.2, §10.1) — only `POST /api/v1/stream/tickets` goes through the normal gateway-authenticated path.
+`deploy/helm/` — Helm chart (`helm lint`/`helm template` clean, resources schema-validated via `kubeconform`).
+
+- **NetworkPolicy** is a named-service ingress allow-list, not a blanket same-namespace `podSelector: {}` — only the gateway/ingress-controller namespace and `event_consumer`'s own pod selector may reach the API port; the monitoring namespace may reach the separate metrics port and nothing else.
+- **`/metrics`** is served on its own port (`METRICS_PORT`) from day one, matching `iam-user-profile`'s pattern rather than `definition_service`'s shared-port one.
+- **`GET /api/v1/stream`** is included in the optional `HTTPRoute` (`ingress.enabled: true`) alongside `POST /api/v1/stream/tickets` — both need to route through the same gateway. `POST /internal/events` is never in the `HTTPRoute`; `event_consumer` reaches it in-cluster via the `Service` directly. Carving `GET /api/v1/stream` out of the gateway's standard JWT/`ext_authz` chain (LLD §5.2/§10.3) is Gateway-level configuration outside this chart entirely — a cross-team item (LLD Appendix B), not something any service's own `HTTPRoute`/`SecurityPolicy` resolves.
+- **`SecurityPolicy`** (optional, CORS only) deliberately has no rate-limit knob — Envoy Gateway configures that via a separate `BackendTrafficPolicy` CRD, not a field on `SecurityPolicy`; both `definition_service`'s and `iam-user-profile`'s own charts carry that same incorrect field (harmless only because it's disabled by default there too).
+- **Autoscaling** is disabled by default: this service scales on open SSE connection count (LLD §10.2), not CPU/RPS, and the exact metric/target is an open LLD item — see `values.yaml`'s `autoscaling` comment before enabling it.
