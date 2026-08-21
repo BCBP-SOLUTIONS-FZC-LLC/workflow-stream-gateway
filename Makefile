@@ -7,7 +7,7 @@ endif
 
 GOLANGCI_VERSION    := v2.12.2
 GOVULNCHECK_VERSION := v1.1.4
-ARCHLINT_VERSION     := v1.11.4
+GOARCHLINT_VERSION   := v1.15.0
 HADOLINT_VERSION    := v2.12.0
 TRIVY_VERSION       := 0.71.2
 
@@ -18,7 +18,7 @@ MODULE       := github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway
 
 GOLANGCI    := $(TOOLS_DIR)/golangci-lint
 GOVULNCHECK := $(TOOLS_DIR)/govulncheck
-ARCHLINT    := $(TOOLS_DIR)/go-arch-lint
+GOARCHLINT  := $(TOOLS_DIR)/go-arch-lint
 HADOLINT    := $(TOOLS_DIR)/hadolint
 TRIVY       := $(TOOLS_DIR)/trivy
 
@@ -29,8 +29,17 @@ COVER_PROFILE   := $(COVERAGE_DIR)/coverage.out
 COVER_HTML      := $(COVERAGE_DIR)/coverage.html
 COVER_THRESHOLD := 90
 
+# internal/adapter/outbound/valkey is a thin wrapper over redis.Cmdable
+# (dial, GET/SET/INCR/EXPIRE) — genuinely hard to exercise at the global
+# floor without a real or faked Redis, and this platform's other services
+# don't unit-test their equivalent thin Valkey wrappers either (verified:
+# execution_service/definition_service carry no cache_test.go). Real
+# coverage of this package comes from the docker-compose smoke test
+# (README's "Local development"), not mocks of redis.Cmdable.
+COVER_PKG_FLOORS := internal/adapter/outbound/valkey:0
+
 .PHONY: all tools setup install-hooks build dev test test-ci \
-        cover cover-func cover-html cover-check \
+        cover cover-func cover-html cover-check cover-check-pkg \
         tidy fmt-check fix check lint lint-fix arch-lint vuln \
         docker-build docker-lint docker-trivy docker-check \
         clean help
@@ -55,7 +64,7 @@ tools:
 	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
 		| sh -s -- -b $(PWD)/$(TOOLS_DIR) $(GOLANGCI_VERSION)
 	GOBIN=$(PWD)/$(TOOLS_DIR) go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
-	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/fe3dback/go-arch-lint@$(ARCHLINT_VERSION)
+	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/fe3dback/go-arch-lint@$(GOARCHLINT_VERSION)
 	@OS=$$(uname -s); ARCH=$$(uname -m); \
 	if [ "$$OS" = "Darwin" ]; then \
 	    if command -v brew >/dev/null 2>&1; then \
@@ -117,12 +126,44 @@ cover-html:
 	go tool cover -html=$(COVER_PROFILE) -o $(COVER_HTML)
 	@open $(COVER_HTML) 2>/dev/null || xdg-open $(COVER_HTML) 2>/dev/null || true
 
-## cover-check: Run test-ci and gate on the global coverage threshold
-cover-check: test-ci
-	@pct=$$(go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{gsub("%","",$$NF); print $$NF}'); \
-	echo "total: $$pct% (threshold $(COVER_THRESHOLD)%)"; \
-	awk -v p="$$pct" -v t="$(COVER_THRESHOLD)" 'BEGIN { exit !(p+0 >= t+0) }' || \
-	  { echo "✗ coverage below threshold"; exit 1; }
+## cover-check-pkg: Per-package coverage gate — each package must meet its floor (run 'make test-ci' first)
+cover-check-pkg:
+	@[ -f $(COVER_PROFILE) ] || { echo "no profile — run 'make test-ci' first"; exit 1; }
+	@awk \
+	  -v module="$(MODULE)/" \
+	  -v floors="$(subst \,,$(COVER_PKG_FLOORS))" \
+	  -v global="$(COVER_THRESHOLD)" \
+	  'BEGIN { \
+	    n=split(floors,pairs," "); \
+	    for(i=1;i<=n;i++){split(pairs[i],kv,":");thresh[kv[1]]=kv[2]+0} \
+	  } \
+	  /^mode:/{next} \
+	  { \
+	    key=$$1; stmts=$$2+0; count=$$3+0; \
+	    blk_stmts[key]=stmts; blk_count[key]+=count; \
+	    path=key; sub(/:.*$$/,"",path); sub(module,"",path); sub(/\/[^\/]+$$/,"",path); \
+	    blk_pkg[key]=path \
+	  } \
+	  END { \
+	    for(key in blk_stmts){ \
+	      pkg=blk_pkg[key]; \
+	      tot[pkg]+=blk_stmts[key]; \
+	      if(blk_count[key]>0) cov[pkg]+=blk_stmts[key] \
+	    } \
+	    fail=0; \
+	    for(pkg in tot){ \
+	      if(tot[pkg]==0)continue; \
+	      pct=cov[pkg]*100/tot[pkg]; \
+	      floor=(pkg in thresh)?thresh[pkg]:global; \
+	      if(pct<floor){printf "✗  %-58s %5.1f%% (need %d%%)\n",pkg,pct,floor; fail=1} \
+	      else{printf "✓  %-58s %5.1f%%\n",pkg,pct} \
+	    } \
+	    exit fail \
+	  }' $(COVER_PROFILE)
+
+## cover-check: Per-package coverage gate (runs the unit suite automatically)
+cover-check: test-ci cover-check-pkg
+	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total (informational):", $$NF}'
 	@echo "✓ coverage ok"
 
 ## tidy: Run go mod tidy
@@ -142,7 +183,7 @@ fix:
 check:
 	@$(MAKE) fmt-check
 	$(GOLANGCI) run ./...
-	$(ARCHLINT) check --project-path .
+	$(GOARCHLINT) check --project-path .
 	go vet ./cmd/... ./internal/...
 	@$(MAKE) cover-check
 	@echo "✓ all checks passed"
@@ -157,7 +198,7 @@ lint-fix:
 
 ## arch-lint: Enforce the domain/usecase/adapter/cmd import-direction rules
 arch-lint:
-	$(ARCHLINT) check --project-path .
+	$(GOARCHLINT) check --project-path .
 
 ## vuln: Run govulncheck against dependencies
 vuln:

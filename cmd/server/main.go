@@ -19,6 +19,11 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/config"
 )
 
+const shutdownTimeout = 10 * time.Second
+
+// version is set via -ldflags at build time (Makefile/Dockerfile).
+var version = "dev"
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
@@ -36,30 +41,31 @@ func run() error {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ValkeyDialTimeout)
-	client, err := valkey.NewClient(ctx, cfg)
+	client, err := valkey.NewClient(ctx, valkey.Options{
+		Addr:         cfg.ValkeyAddr,
+		Password:     cfg.ValkeyPassword,
+		DialTimeout:  cfg.ValkeyDialTimeout,
+		ReadTimeout:  cfg.ValkeyReadTimeout,
+		WriteTimeout: cfg.ValkeyWriteTimeout,
+	})
 	cancel()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if err := client.Ping(r.Context()).Err(); err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			slog.Error("valkey close", "error", closeErr)
 		}
-		w.WriteHeader(http.StatusOK)
-	})
+	}()
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: mux,
+		Handler: newRouter(cfg, client),
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "port", cfg.HTTPPort)
+		slog.Info("listening", "port", cfg.HTTPPort, "version", version)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
@@ -75,7 +81,10 @@ func run() error {
 		slog.Info("shutting down")
 	}
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
-	return srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("server shutdown: %w", err)
+	}
+	return nil
 }
