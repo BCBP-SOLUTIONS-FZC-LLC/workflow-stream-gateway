@@ -73,6 +73,25 @@ func TestEventsHandler_Ingest_UnknownTypeIgnoredWith200(t *testing.T) {
 	assert.Equal(t, 0, store.appendCalls)
 }
 
+// errorReadCloser fails every Read — exercises Ingest's io.ReadAll error
+// branch, which a normal strings.Reader body never hits.
+type errorReadCloser struct{}
+
+func (errorReadCloser) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+func (errorReadCloser) Close() error             { return nil }
+
+func TestEventsHandler_Ingest_BodyReadFailureReturns400(t *testing.T) {
+	store := &fakeEventStore{}
+	r, _ := newEventsTestRouter(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/internal/events", nil)
+	req.Body = errorReadCloser{}
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func TestEventsHandler_Ingest_MalformedBodyReturns400(t *testing.T) {
 	store := &fakeEventStore{}
 	r, _ := newEventsTestRouter(store)

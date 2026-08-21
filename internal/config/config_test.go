@@ -17,6 +17,7 @@ func TestLoad_Defaults(t *testing.T) {
 
 	assert.Equal(t, "dev", cfg.AppEnv)
 	assert.Equal(t, 8080, cfg.HTTPPort)
+	assert.Equal(t, 9090, cfg.MetricsPort)
 	assert.Equal(t, "localhost:6379", cfg.ValkeyAddr)
 	assert.Equal(t, 60*time.Second, cfg.TicketTTL)
 	assert.Equal(t, 10, cfg.TicketMintRateMax)
@@ -76,6 +77,12 @@ func TestValidate_RejectsInvalidHTTPPort(t *testing.T) {
 	assert.ErrorContains(t, cfg.validate(), "HTTP_PORT")
 }
 
+func TestValidate_RejectsInvalidMetricsPort(t *testing.T) {
+	cfg := validConfig()
+	cfg.MetricsPort = 0
+	assert.ErrorContains(t, cfg.validate(), "METRICS_PORT")
+}
+
 func TestValidate_RejectsNonPositiveTicketTTL(t *testing.T) {
 	cfg := validConfig()
 	cfg.TicketTTL = 0
@@ -122,6 +129,7 @@ func validConfig() *Config {
 	return &Config{
 		AppEnv:                "dev",
 		HTTPPort:              8080,
+		MetricsPort:           9090,
 		TicketTTL:             60 * time.Second,
 		TicketMintRateMax:     10,
 		TicketMintRateWindow:  60 * time.Second,

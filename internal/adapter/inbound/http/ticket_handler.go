@@ -11,6 +11,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
@@ -49,17 +50,26 @@ func (h *TicketHandler) Mint(c *gin.Context) {
 	token, ttl, err := h.tickets.Mint(c.Request.Context(), snapshot)
 	switch {
 	case errors.Is(err, usecase.ErrRateLimited):
+		recordTicketMint("rate_limited")
 		writeProblem(c, http.StatusTooManyRequests, "rate-limited", "ticket mint rate limit exceeded")
 		return
 	case err != nil:
+		recordTicketMint("valkey_unavailable")
 		writeProblem(c, http.StatusServiceUnavailable, "unavailable", "ticket store unavailable")
 		return
 	}
 
+	recordTicketMint("ok")
 	c.JSON(http.StatusCreated, gin.H{
 		"ticket":     token,
 		"expires_in": int(ttl.Seconds()),
 	})
+}
+
+func recordTicketMint(result string) {
+	if observability.TicketsMintedTotal != nil {
+		observability.TicketsMintedTotal.WithLabelValues(result).Inc()
+	}
 }
 
 // splitHeaderList mirrors execution_service's departmentsHeader parsing

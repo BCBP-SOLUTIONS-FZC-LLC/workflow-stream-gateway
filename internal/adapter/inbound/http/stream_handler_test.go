@@ -40,7 +40,8 @@ func TestGinFrameSink_WriteErrorsPropagate(t *testing.T) {
 // --- fakes for stream tests ----------------------------------------------
 
 type fakeTicketStore struct {
-	tickets map[string]domain.Ticket
+	tickets  map[string]domain.Ticket
+	forceErr error
 }
 
 func (f *fakeTicketStore) AllowMint(_ context.Context, _, _ string, _ int, _ time.Duration) (bool, error) {
@@ -53,6 +54,9 @@ func (f *fakeTicketStore) PutTicket(_ context.Context, token string, ticket doma
 }
 
 func (f *fakeTicketStore) GetTicket(_ context.Context, token string) (domain.Ticket, error) {
+	if f.forceErr != nil {
+		return domain.Ticket{}, f.forceErr
+	}
 	ticket, ok := f.tickets[token]
 	if !ok {
 		return domain.Ticket{}, usecase.ErrTicketNotFound
@@ -97,10 +101,14 @@ func (s *stopAfterOneStreamStore) ReadNew(_ context.Context, _, _ string, _ time
 }
 
 type alwaysAllowLimiter struct {
-	allow bool
+	allow    bool
+	forceErr error
 }
 
 func (l *alwaysAllowLimiter) TryAcquire(_ context.Context, _, _ string, _ int, _ time.Duration) (bool, error) {
+	if l.forceErr != nil {
+		return false, l.forceErr
+	}
 	return l.allow, nil
 }
 
@@ -123,6 +131,30 @@ func TestStreamHandler_Stream_MissingTicketReturns401(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestStreamHandler_Stream_TicketStoreUnavailableReturns503(t *testing.T) {
+	ticketStore := &fakeTicketStore{tickets: map[string]domain.Ticket{}, forceErr: errors.New("valkey unreachable")}
+	r := newStreamTestRouter(ticketStore, &stopAfterOneStreamStore{}, &alwaysAllowLimiter{allow: true})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream?ticket=tok", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+func TestStreamHandler_Stream_ConnectionStoreUnavailableReturns503(t *testing.T) {
+	ticketStore := &fakeTicketStore{tickets: map[string]domain.Ticket{
+		"tok": {TenantID: "tenant-a", UserID: "user-1"},
+	}}
+	r := newStreamTestRouter(ticketStore, &stopAfterOneStreamStore{}, &alwaysAllowLimiter{forceErr: errors.New("valkey unreachable")})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream?ticket=tok", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
 func TestStreamHandler_Stream_UnknownTicketReturns401(t *testing.T) {

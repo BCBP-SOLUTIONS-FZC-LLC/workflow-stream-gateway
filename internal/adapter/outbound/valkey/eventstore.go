@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability"
 )
 
 // EventStore implements usecase.EventStreamStore against real Valkey —
@@ -44,6 +46,10 @@ func (s *EventStore) AppendEvent(ctx context.Context, tenantID, userID, eventTyp
 
 	if err := s.client.Expire(ctx, key, s.keyTTL).Err(); err != nil {
 		return fmt.Errorf("valkey expire: %w", err)
+	}
+
+	if observability.FramesWrittenTotal != nil {
+		observability.FramesWrittenTotal.WithLabelValues(eventType).Inc()
 	}
 	return nil
 }

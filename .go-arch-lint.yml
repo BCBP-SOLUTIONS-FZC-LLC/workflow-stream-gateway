@@ -19,6 +19,8 @@ components:
     in: "internal/usecase/**"
   config:
     in: "internal/config/**"
+  observability:
+    in: "internal/observability/**"
   adapter:
     in: "internal/adapter/**"
   cmd:
@@ -32,9 +34,11 @@ deps:
     mayDependOn:
       - domain
       - usecase
+      - observability
   cmd:
     mayDependOn:
       - domain
       - usecase
       - adapter
       - config
+      - observability

@@ -14,6 +14,10 @@ type Config struct {
 	BuildVersion string
 
 	HTTPPort int
+	// MetricsPort is deliberately a separate port from HTTPPort — /metrics
+	// grants no API access, and NetworkPolicy scopes each port's ingress
+	// independently (per-service Helm chart, punch-list item 7).
+	MetricsPort int
 
 	ValkeyAddr         string
 	ValkeyPassword     string
@@ -48,7 +52,8 @@ func Load() (*Config, error) {
 		AppEnv:       getEnvOrDefault("APP_ENV", "dev"),
 		BuildVersion: getEnvOrDefault("BUILD_VERSION", "dev"),
 
-		HTTPPort: getEnvIntOrDefault("HTTP_PORT", 8080),
+		HTTPPort:    getEnvIntOrDefault("HTTP_PORT", 8080),
+		MetricsPort: getEnvIntOrDefault("METRICS_PORT", 9090),
 
 		ValkeyAddr:         getEnvOrDefault("VALKEY_ADDR", "localhost:6379"),
 		ValkeyPassword:     getEnvOrDefault("VALKEY_PASSWORD", ""),
@@ -80,6 +85,9 @@ func Load() (*Config, error) {
 func (c *Config) validate() error {
 	if c.HTTPPort < 1 || c.HTTPPort > 65535 {
 		return fmt.Errorf("HTTP_PORT must be in [1, 65535]")
+	}
+	if c.MetricsPort < 1 || c.MetricsPort > 65535 {
+		return fmt.Errorf("METRICS_PORT must be in [1, 65535]")
 	}
 	if c.AppEnv == "prod" && c.InternalAPIToken == "" {
 		return fmt.Errorf("WORKFLOW_STREAM_GATEWAY_TOKEN is required when APP_ENV=prod")

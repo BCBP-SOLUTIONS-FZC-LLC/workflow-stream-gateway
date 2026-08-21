@@ -16,8 +16,17 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
+
+// Registering metrics once for this package's whole test suite lets every
+// handler test exercise its real observability.*.Inc() call sites, not
+// just the nil-guard around them — matching how cmd/server calls this
+// exactly once at real process boot.
+func init() {
+	observability.Register()
+}
 
 // fixtureStore is a minimal usecase.Store fake for exercising the HTTP
 // handler layer — kept local rather than shared with internal/usecase's
@@ -103,6 +112,29 @@ func TestTicketHandler_Mint_MissingIdentityHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
+
+	// gincommon's own RequireAuth middleware already rejects a request
+	// with no gateway identity headers before Mint ever runs — this test
+	// just confirms 401 either way.
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestTicketHandler_Mint_NoRequestContext exercises the handler's own
+// defensive check directly (belt-and-suspenders behind gincommon's
+// RequireAuth, matching execution_service's identical precedent) by
+// invoking Mint with no middleware chain at all, so gincommon never
+// injects a RequestContext.
+func TestTicketHandler_Mint_NoRequestContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &fixtureStore{tickets: map[string]domain.Ticket{}, allow: true}
+	svc := usecase.NewTicketService(store, 60*time.Second, 10, time.Minute)
+	handler := NewTicketHandler(svc)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil)
+
+	handler.Mint(c)
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }

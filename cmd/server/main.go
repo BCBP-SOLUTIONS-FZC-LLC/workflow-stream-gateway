@@ -15,8 +15,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/valkey"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/config"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -58,15 +61,33 @@ func run() error {
 		}
 	}()
 
+	observability.Register()
+
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
 		Handler: newRouter(cfg, client),
 	}
 
-	errCh := make(chan error, 1)
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	// A separate port from srv (LLD §12, punch-list item 7): /metrics
+	// grants no API access, so NetworkPolicy can scope its own ingress
+	// independently of the API port's.
+	metricsSrv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", cfg.MetricsPort),
+		Handler: metricsMux,
+	}
+
+	errCh := make(chan error, 2)
 	go func() {
 		slog.Info("listening", "port", cfg.HTTPPort, "version", version)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+	go func() {
+		slog.Info("metrics listening", "port", cfg.MetricsPort)
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
@@ -85,6 +106,9 @@ func run() error {
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("server shutdown: %w", err)
+	}
+	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("metrics server shutdown: %w", err)
 	}
 	return nil
 }

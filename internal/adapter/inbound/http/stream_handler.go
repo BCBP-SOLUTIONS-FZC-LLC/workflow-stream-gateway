@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
@@ -35,23 +36,33 @@ func (h *StreamHandler) Stream(c *gin.Context) {
 	ticket, err := h.stream.ValidateTicket(c.Request.Context(), token)
 	switch {
 	case errors.Is(err, usecase.ErrTicketNotFound):
+		recordConnectionRejected("invalid_ticket")
 		writeProblem(c, http.StatusUnauthorized, "unauthorized", "ticket missing or expired")
 		return
 	case err != nil:
+		recordConnectionRejected("valkey_unavailable")
 		writeProblem(c, http.StatusServiceUnavailable, "unavailable", "ticket store unavailable")
 		return
 	}
 
 	acquired, err := h.stream.AcquireConnection(c.Request.Context(), ticket.TenantID, ticket.UserID)
 	if err != nil {
+		recordConnectionRejected("valkey_unavailable")
 		writeProblem(c, http.StatusServiceUnavailable, "unavailable", "connection store unavailable")
 		return
 	}
 	if !acquired {
+		recordConnectionRejected("cap_exceeded")
 		writeProblem(c, http.StatusTooManyRequests, "connection-cap-exceeded", "concurrent connection cap exceeded")
 		return
 	}
+	if observability.ConnectionsOpen != nil {
+		observability.ConnectionsOpen.Inc()
+	}
 	defer func() {
+		if observability.ConnectionsOpen != nil {
+			observability.ConnectionsOpen.Dec()
+		}
 		// Best-effort: a release that fails to reach Valkey leaks one
 		// count until the key's own TTL clears it (LLD §4) — not worth
 		// failing the request over on the way out.
@@ -70,6 +81,12 @@ func (h *StreamHandler) Stream(c *gin.Context) {
 	c.Writer.WriteHeader(http.StatusOK)
 
 	_ = h.stream.Serve(c.Request.Context(), ticket.TenantID, ticket.UserID, lastEventID, ginFrameSink{w: c.Writer})
+}
+
+func recordConnectionRejected(reason string) {
+	if observability.ConnectionsRejectedTotal != nil {
+		observability.ConnectionsRejectedTotal.WithLabelValues(reason).Inc()
+	}
 }
 
 // ginFrameSink adapts usecase.FrameSink onto gin's ResponseWriter (which
