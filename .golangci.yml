@@ -1,0 +1,38 @@
+version: "2"
+
+run:
+  go: '1.26'
+  concurrency: 1
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - wrapcheck
+    - revive
+    - misspell
+    - unconvert
+    - unparam
+  settings:
+    revive:
+      rules:
+        - name: var-naming
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: if-return
+    wrapcheck:
+      ignore-package-globs:
+        - github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/*
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - wrapcheck
+          - unparam
+
+formatters:
+  enable:
+    - goimports

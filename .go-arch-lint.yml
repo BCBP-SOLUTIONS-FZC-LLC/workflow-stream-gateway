@@ -1,0 +1,40 @@
+# go-arch-lint configuration — enforces the domain/usecase/adapter/cmd
+# layering from the LLD's repo skeleton (workflow_stream_gateway.md §10.1).
+#
+# Run: go-arch-lint check --project-path .
+version: 2
+workdir: .
+
+exclude:
+  - ".claude"
+  - "vendor"
+
+allow:
+  depOnAnyVendor: true
+
+components:
+  domain:
+    in: "internal/domain/**"
+  usecase:
+    in: "internal/usecase/**"
+  config:
+    in: "internal/config/**"
+  adapter:
+    in: "internal/adapter/**"
+  cmd:
+    in: "cmd/**"
+
+deps:
+  usecase:
+    mayDependOn:
+      - domain
+  adapter:
+    mayDependOn:
+      - domain
+      - usecase
+  cmd:
+    mayDependOn:
+      - domain
+      - usecase
+      - adapter
+      - config

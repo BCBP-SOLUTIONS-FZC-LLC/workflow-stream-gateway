@@ -1,0 +1,39 @@
+name: CI
+
+"on":
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  validate-quality:
+    name: Validate / Quality
+    uses: ./.github/workflows/validate-quality.yml
+    secrets: inherit
+
+  validate-test:
+    name: Validate / Test
+    uses: ./.github/workflows/validate-test.yml
+    secrets: inherit
+
+  pr-summary:
+    name: PR summary
+    if: always() && github.event_name == 'pull_request'
+    needs: [validate-quality, validate-test]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "validate-quality and validate-test are the gates for this repo."

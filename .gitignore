@@ -1,0 +1,6 @@
+/bin/
+/.tools/
+/.coverage/
+.env
+.go_private_token
+*.log
