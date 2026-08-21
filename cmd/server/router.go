@@ -15,12 +15,13 @@ import (
 
 // newRouter wires the gin.Engine: an unprotected /healthz, the
 // gateway-authenticated /api/v1 group (LLD §5.1's ticket-mint endpoint),
-// and a separate /internal group guarded by RequireInternalToken (LLD
-// §3.2) — never nested under /api/v1, so it never inherits
-// ProtectedMiddlewares and never sees a gateway identity header. GET
-// /api/v1/stream (Phase 4) is deliberately not registered here yet — see
-// LLD §5.2/§10.1 on why it can't share this same ProtectedMiddlewares
-// group either.
+// a separate /internal group guarded by RequireInternalToken (LLD §3.2,
+// never nested under /api/v1 so it never inherits ProtectedMiddlewares or
+// sees a gateway identity header), and GET /api/v1/stream registered
+// directly on the root engine — deliberately outside every auth
+// middleware group, since EventSource can't set an Authorization header
+// and the ticket it carries as a query param is validated by the handler
+// itself (LLD §5.2, §9.1).
 func newRouter(cfg *config.Config, client *redis.Client) *gin.Engine {
 	if cfg.AppEnv != "dev" {
 		gin.SetMode(gin.ReleaseMode)
@@ -54,6 +55,19 @@ func newRouter(cfg *config.Config, client *redis.Client) *gin.Engine {
 	internalGroup := r.Group("/internal")
 	internalGroup.Use(middleware.RequireInternalToken(cfg.InternalAPIToken))
 	internalGroup.POST("/events", eventsHandler.Ingest)
+
+	streamStore := sgValkey.NewStreamStore(client)
+	connLimiter := sgValkey.NewConnectionLimiter(client)
+	// LLD §4 requires the conncount key's own TTL to exceed the ticket
+	// TTL, without naming an exact value — TicketTTL+HeartbeatInterval is
+	// simply a value guaranteed to satisfy that, not its own config knob.
+	connCountTTL := cfg.TicketTTL + cfg.HeartbeatInterval
+	streamService := usecase.NewStreamService(
+		ticketService, streamStore, connLimiter,
+		cfg.ConnectionCapPerUser, connCountTTL, cfg.HeartbeatInterval,
+	)
+	streamHandler := sgHTTP.NewStreamHandler(streamService)
+	r.GET("/api/v1/stream", streamHandler.Stream)
 
 	return r
 }
