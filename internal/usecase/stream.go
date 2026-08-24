@@ -36,14 +36,19 @@ type StreamTarget struct {
 // StreamStore is the read side of the Valkey Streams the fan-out path
 // writes to (LLD §4, §6, §8).
 type StreamStore interface {
-	// OldestEntryID returns the ID of the oldest entry currently retained
-	// in the personal stream, or exists=false if the key is empty or
-	// expired. Backfill only ever applies to the personal stream (see
-	// StreamService.backfill's own doc comment for why).
-	OldestEntryID(ctx context.Context, tenantID, userID string) (id string, exists bool, err error)
-	// RangeSince returns personal-stream entries with ID > afterID,
-	// oldest first.
-	RangeSince(ctx context.Context, tenantID, userID, afterID string) ([]domain.Frame, error)
+	// KeyFor returns the identifier a target's stream is tagged with —
+	// the same value OldestEntryID/RangeSince/ReadNew's returned Frames
+	// carry as Frame.SourceKey, and the compound resume cursor's (LLD
+	// §8) per-target key. The adapter, not this package, owns the actual
+	// Valkey key-naming scheme — this just exposes it.
+	KeyFor(target StreamTarget) string
+	// OldestEntryID returns the ID of the oldest entry currently
+	// retained in target's stream, or exists=false if the key is empty
+	// or expired.
+	OldestEntryID(ctx context.Context, target StreamTarget) (id string, exists bool, err error)
+	// RangeSince returns target's stream entries with ID > afterID,
+	// oldest first, each tagged with target's own key (Frame.SourceKey).
+	RangeSince(ctx context.Context, target StreamTarget, afterID string) ([]domain.Frame, error)
 	// ReadNew blocks up to block for entries newer than "now" across
 	// every given target's stream, returning a nil slice (no error) on
 	// timeout — the caller treats that as "send a heartbeat and loop
@@ -156,12 +161,28 @@ func isTenantWideEligible(roles []string) bool {
 // default (an open connection silently retrying forever against a downed
 // store is worse than forcing an ordinary client reconnect).
 func (s *StreamService) Serve(ctx context.Context, ticket domain.Ticket, lastEventID string, sink FrameSink) error {
-	frames, resyncRequired, err := s.backfill(ctx, ticket.TenantID, ticket.UserID, lastEventID)
+	targets := streamTargets(ticket)
+
+	// cursors seeds only the keys that both (a) the incoming compound
+	// Last-Event-ID names and (b) this connection is actually tailing
+	// right now — a stale key from a department the ticket no longer
+	// holds is dropped, never carried forward (LLD §8, §9).
+	incoming := decodeCursor(lastEventID)
+	cursors := make(map[string]string, len(targets))
+	for _, t := range targets {
+		key := s.store.KeyFor(t)
+		if id, ok := incoming[key]; ok {
+			cursors[key] = id
+		}
+	}
+
+	frames, resyncRequired, err := s.backfill(ctx, targets, cursors)
 	if err != nil {
 		return err
 	}
 	for _, f := range frames {
-		if err := sink.WriteFrame(f.ID, f.EventType, f.Data); err != nil {
+		cursors[f.SourceKey] = f.ID
+		if err := sink.WriteFrame(encodeCursor(cursors), f.EventType, f.Data); err != nil {
 			return err
 		}
 	}
@@ -171,7 +192,6 @@ func (s *StreamService) Serve(ctx context.Context, ticket domain.Ticket, lastEve
 		}
 	}
 
-	targets := streamTargets(ticket)
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -190,39 +210,55 @@ func (s *StreamService) Serve(ctx context.Context, ticket domain.Ticket, lastEve
 			continue
 		}
 		for _, f := range newFrames {
-			if err := sink.WriteFrame(f.ID, f.EventType, f.Data); err != nil {
+			cursors[f.SourceKey] = f.ID
+			// Every frame's "id:" is the full cursor snapshot after this
+			// frame, not just this frame's own stream ID — a single
+			// EventSource Last-Event-ID has to carry every tailed
+			// stream's position for the next reconnect (LLD §8).
+			if err := sink.WriteFrame(encodeCursor(cursors), f.EventType, f.Data); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-// backfill returns the frames to replay for a reconnecting client (LLD
-// §8), personal stream only — the tenant-wide/department broadcast
-// streams are always live-tail-only, never backfilled. Last-Event-ID is
-// a single token; resuming an unbounded number of independent Stream ID
-// sequences (one per broadcast target a ticket might be eligible for) at
-// once needs a compound-ID scheme this design doesn't build. A fresh
-// connection (no lastEventID) replays nothing. Beyond the retention
-// window — the oldest retained entry is already newer than lastEventID,
-// or the stream key itself expired — no partial replay is attempted; the
-// caller emits a resync-required control frame instead.
-func (s *StreamService) backfill(ctx context.Context, tenantID, userID, lastEventID string) ([]domain.Frame, bool, error) {
-	if lastEventID == "" {
+// backfill returns, per target, the frames to replay for a reconnecting
+// client (LLD §8). cursors is already scoped to targets this connection
+// is tailing (Serve's own seeding step) — a target absent from cursors
+// (fresh connection, or a target the ticket only just gained) gets no
+// backfill, matching the original single-stream design's "no
+// lastEventID -> replay nothing," just decided per-target instead of
+// connection-wide. If ANY target's retention window has been exceeded —
+// its oldest retained entry is already newer than that target's cursor,
+// or its stream key itself expired — the WHOLE connection gets
+// resync-required rather than a partial replay: a client silently
+// missing events on some streams while others replay cleanly is worse
+// than its existing full-REST-refetch fallback.
+func (s *StreamService) backfill(ctx context.Context, targets []StreamTarget, cursors map[string]string) ([]domain.Frame, bool, error) {
+	if len(cursors) == 0 {
 		return nil, false, nil
 	}
 
-	oldestID, exists, err := s.store.OldestEntryID(ctx, tenantID, userID)
-	if err != nil {
-		return nil, false, err
-	}
-	if !exists || compareStreamIDs(oldestID, lastEventID) > 0 {
-		return nil, true, nil
-	}
+	var frames []domain.Frame
+	for _, t := range targets {
+		lastID, ok := cursors[s.store.KeyFor(t)]
+		if !ok {
+			continue
+		}
 
-	frames, err := s.store.RangeSince(ctx, tenantID, userID, lastEventID)
-	if err != nil {
-		return nil, false, err
+		oldestID, exists, err := s.store.OldestEntryID(ctx, t)
+		if err != nil {
+			return nil, false, err
+		}
+		if !exists || compareStreamIDs(oldestID, lastID) > 0 {
+			return nil, true, nil
+		}
+
+		targetFrames, err := s.store.RangeSince(ctx, t, lastID)
+		if err != nil {
+			return nil, false, err
+		}
+		frames = append(frames, targetFrames...)
 	}
 	return frames, false, nil
 }

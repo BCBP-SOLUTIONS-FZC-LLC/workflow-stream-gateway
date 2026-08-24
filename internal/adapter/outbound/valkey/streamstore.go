@@ -23,9 +23,15 @@ func NewStreamStore(client redis.Cmdable) *StreamStore {
 	return &StreamStore{client: client}
 }
 
-func (s *StreamStore) OldestEntryID(ctx context.Context, tenantID, userID string) (string, bool, error) {
-	key := fmt.Sprintf("sse:events:%s:%s", tenantID, userID)
-	entries, err := s.client.XRangeN(ctx, key, "-", "+", 1).Result()
+// KeyFor exposes this adapter's private key-naming scheme to the usecase
+// layer, which needs a stable per-target key for the compound resume
+// cursor (LLD §8) without owning that naming scheme itself.
+func (s *StreamStore) KeyFor(target usecase.StreamTarget) string {
+	return keyFor(target)
+}
+
+func (s *StreamStore) OldestEntryID(ctx context.Context, target usecase.StreamTarget) (string, bool, error) {
+	entries, err := s.client.XRangeN(ctx, keyFor(target), "-", "+", 1).Result()
 	if err != nil {
 		return "", false, fmt.Errorf("valkey xrange: %w", err)
 	}
@@ -35,13 +41,13 @@ func (s *StreamStore) OldestEntryID(ctx context.Context, tenantID, userID string
 	return entries[0].ID, true, nil
 }
 
-func (s *StreamStore) RangeSince(ctx context.Context, tenantID, userID, afterID string) ([]domain.Frame, error) {
-	key := fmt.Sprintf("sse:events:%s:%s", tenantID, userID)
+func (s *StreamStore) RangeSince(ctx context.Context, target usecase.StreamTarget, afterID string) ([]domain.Frame, error) {
+	key := keyFor(target)
 	entries, err := s.client.XRange(ctx, key, "("+afterID, "+").Result()
 	if err != nil {
 		return nil, fmt.Errorf("valkey xrange: %w", err)
 	}
-	return toFrames(entries), nil
+	return toFramesFrom(key, entries), nil
 }
 
 // ReadNew issues one multi-key XREAD BLOCK across every given target's
@@ -73,7 +79,7 @@ func (s *StreamStore) ReadNew(ctx context.Context, targets []usecase.StreamTarge
 
 	var frames []domain.Frame
 	for _, stream := range res {
-		frames = append(frames, toFrames(stream.Messages)...)
+		frames = append(frames, toFramesFrom(stream.Stream, stream.Messages)...)
 	}
 	return frames, nil
 }
@@ -91,7 +97,10 @@ func keyFor(t usecase.StreamTarget) string {
 	}
 }
 
-func toFrames(entries []redis.XMessage) []domain.Frame {
+// toFramesFrom tags every entry with the Valkey key it was read from —
+// StreamService needs this to update the right slot of a connection's
+// compound resume cursor (LLD §8) when it's tailing more than one stream.
+func toFramesFrom(sourceKey string, entries []redis.XMessage) []domain.Frame {
 	frames := make([]domain.Frame, 0, len(entries))
 	for _, e := range entries {
 		eventType, _ := e.Values["event"].(string)
@@ -102,7 +111,7 @@ func toFrames(entries []redis.XMessage) []domain.Frame {
 		case []byte:
 			data = v
 		}
-		frames = append(frames, domain.Frame{ID: e.ID, EventType: eventType, Data: data})
+		frames = append(frames, domain.Frame{ID: e.ID, EventType: eventType, Data: data, SourceKey: sourceKey})
 	}
 	return frames
 }

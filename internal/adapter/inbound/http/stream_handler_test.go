@@ -84,12 +84,31 @@ type readNewResult struct {
 
 var errHandlerTestStop = errors.New("test: stop stream")
 
-func (s *stopAfterOneStreamStore) OldestEntryID(_ context.Context, _, _ string) (string, bool, error) {
+// KeyFor mirrors the real adapter's key-naming scheme closely enough for
+// tests — only needs to be stable and internally consistent with itself.
+func (s *stopAfterOneStreamStore) KeyFor(t usecase.StreamTarget) string {
+	switch {
+	case t.UserID != "":
+		return "sse:events:" + t.TenantID + ":" + t.UserID
+	case t.DepartmentID != "":
+		return "sse:events:broadcast:" + t.TenantID + ":" + t.DepartmentID
+	default:
+		return "sse:events:broadcast:" + t.TenantID
+	}
+}
+
+func (s *stopAfterOneStreamStore) OldestEntryID(_ context.Context, _ usecase.StreamTarget) (string, bool, error) {
 	return "1-0", s.oldestExists, nil
 }
 
-func (s *stopAfterOneStreamStore) RangeSince(_ context.Context, _, _, _ string) ([]domain.Frame, error) {
-	return s.rangeFrames, nil
+func (s *stopAfterOneStreamStore) RangeSince(_ context.Context, target usecase.StreamTarget, _ string) ([]domain.Frame, error) {
+	key := s.KeyFor(target)
+	tagged := make([]domain.Frame, len(s.rangeFrames))
+	for i, f := range s.rangeFrames {
+		f.SourceKey = key
+		tagged[i] = f
+	}
+	return tagged, nil
 }
 
 func (s *stopAfterOneStreamStore) ReadNew(_ context.Context, targets []usecase.StreamTarget, _ time.Duration) ([]domain.Frame, error) {
@@ -204,7 +223,7 @@ func TestStreamHandler_Stream_LiveTailWritesHeartbeatAndFrame(t *testing.T) {
 	store := &stopAfterOneStreamStore{
 		readNewSeq: []readNewResult{
 			{frames: nil}, // timeout -> heartbeat comment
-			{frames: []domain.Frame{{ID: "200-0", EventType: "workflow.task.created", Data: []byte(`{"x":1}`)}}},
+			{frames: []domain.Frame{{ID: "200-0", EventType: "workflow.task.created", Data: []byte(`{"x":1}`), SourceKey: "sse:events:tenant-a:user-1"}}},
 		},
 	}
 	r := newStreamTestRouter(ticketStore, store, &alwaysAllowLimiter{allow: true})
@@ -216,7 +235,9 @@ func TestStreamHandler_Stream_LiveTailWritesHeartbeatAndFrame(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
 	assert.Contains(t, body, ": keep-alive")
-	assert.Contains(t, body, "id: 200-0")
+	// The SSE "id:" line is the full compound resume cursor (LLD §8), not
+	// the bare stream ID — the frame's own key=id pair is in there.
+	assert.Contains(t, body, "id: sse:events:tenant-a:user-1=200-0")
 	assert.Contains(t, body, "event: workflow.task.created")
 	assert.Contains(t, body, `data: {"x":1}`)
 }
@@ -270,7 +291,9 @@ func TestStreamHandler_Stream_BackfillBeyondWindowWritesResyncFrame(t *testing.T
 	store := &stopAfterOneStreamStore{oldestExists: false}
 	r := newStreamTestRouter(ticketStore, store, &alwaysAllowLimiter{allow: true})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream?ticket=tok&last_event_id=1-0", nil)
+	// The compound cursor format (LLD §8): "<key>=<id>", keyed by this
+	// connection's personal target.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream?ticket=tok&last_event_id=sse:events:tenant-a:user-1=1-0", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -285,8 +308,8 @@ func TestStreamHandler_Stream_LastEventIDHeaderTakesPrecedenceOverQueryParam(t *
 	store := &stopAfterOneStreamStore{oldestExists: false}
 	r := newStreamTestRouter(ticketStore, store, &alwaysAllowLimiter{allow: true})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream?ticket=tok&last_event_id=1-0", nil)
-	req.Header.Set("Last-Event-ID", "2-0")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream?ticket=tok&last_event_id=sse:events:tenant-a:user-1=1-0", nil)
+	req.Header.Set("Last-Event-ID", "sse:events:tenant-a:user-1=2-0")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
