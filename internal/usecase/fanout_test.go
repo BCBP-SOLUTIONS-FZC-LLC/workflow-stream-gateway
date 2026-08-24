@@ -32,7 +32,7 @@ func (f *fakeEventStore) AppendEvent(_ context.Context, tenantID, userID, eventT
 func TestIsKnownEventType(t *testing.T) {
 	known := []string{
 		eventTaskCreated, eventTaskCompleted, eventTaskDeferred, eventTaskReassigned,
-		eventTaskSLAWarning, eventTaskSLABreached, eventInstanceStarted, eventInstancePaused,
+		eventTaskSLAWarning, eventTaskSLABreached, eventInstancePaused,
 		eventInstanceResumed, eventInstanceCancelled, eventInstanceTerminated, eventInstanceFinished,
 	}
 	for _, eventType := range known {
@@ -40,6 +40,9 @@ func TestIsKnownEventType(t *testing.T) {
 	}
 	assert.False(t, IsKnownEventType("user.deleted"))
 	assert.False(t, IsKnownEventType(""))
+	// Decided 2026-08-24: not consumed, matches execution_service's own
+	// asyncapi.yaml ("the creating client already knows synchronously").
+	assert.False(t, IsKnownEventType("workflow.instance.started"))
 }
 
 func TestFanoutService_Ingest_TaskEventFansOutToAllAssignees(t *testing.T) {
@@ -100,7 +103,7 @@ func TestFanoutService_Ingest_SkipsEmptyRecipients(t *testing.T) {
 	svc := NewFanoutService(store)
 
 	err := svc.Ingest(context.Background(), IngestInput{
-		EventType:   eventInstanceStarted,
+		EventType:   eventInstanceFinished,
 		TenantID:    "tenant-a",
 		Payload:     []byte(`{"started_by_user_id":""}`),
 		RawEnvelope: []byte(`{}`),

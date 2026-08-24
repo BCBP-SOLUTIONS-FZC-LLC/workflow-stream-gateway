@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-// The 12 wire types this service consumes (LLD §3.1). Payload schemas are
+// The 11 wire types this service consumes (LLD §3.1). Payload schemas are
 // owned by execution_service's own api/asyncapi.yaml — verified there
 // (2026-08-21) that every task-scoped payload carries "assignee_user_ids"
 // ([]string), workflow.task.reassigned additionally carries "old_user_id"/
@@ -15,7 +15,15 @@ import (
 // "started_by_user_id" (string) and — as of that verification — no
 // active-assignees field at all, despite this LLD's §6 routing table
 // hedging "+ active assignees, where present": today, "where present" is
-// never, for all 6 instance events currently registered.
+// never, for all 5 instance events currently registered.
+//
+// workflow.instance.started is deliberately NOT in this list (decided
+// 2026-08-24, resolving the routing-table contradiction the LLD itself
+// had flagged): execution_service's own asyncapi.yaml documents it as
+// "not routed to the Dashboard Stream Gateway — the creating client
+// already knows synchronously." An unknown type is still accepted and
+// ignored with 200 (IsKnownEventType below), so a producer that hasn't
+// caught up to this decision never breaks delivery here.
 const (
 	eventTaskCreated        = "workflow.task.created"
 	eventTaskCompleted      = "workflow.task.completed"
@@ -23,7 +31,6 @@ const (
 	eventTaskReassigned     = "workflow.task.reassigned"
 	eventTaskSLAWarning     = "workflow.task.sla-warning"
 	eventTaskSLABreached    = "workflow.task.sla-breached"
-	eventInstanceStarted    = "workflow.instance.started"
 	eventInstancePaused     = "workflow.instance.paused"
 	eventInstanceResumed    = "workflow.instance.resumed"
 	eventInstanceCancelled  = "workflow.instance.cancelled"
@@ -40,7 +47,6 @@ var taskAssigneeEvents = map[string]bool{
 }
 
 var instanceEvents = map[string]bool{
-	eventInstanceStarted:    true,
 	eventInstancePaused:     true,
 	eventInstanceResumed:    true,
 	eventInstanceCancelled:  true,
@@ -48,7 +54,7 @@ var instanceEvents = map[string]bool{
 	eventInstanceFinished:   true,
 }
 
-// ErrUnknownEventType is returned for a wire type absent from the 12
+// ErrUnknownEventType is returned for a wire type absent from the 11
 // known types — the handler treats this as forward-compatible, not an
 // error (LLD §3.2 step 2: log, count, 200).
 var ErrUnknownEventType = errors.New("unknown event type")
@@ -58,7 +64,7 @@ var ErrUnknownEventType = errors.New("unknown event type")
 // handler maps this to 400 (non-retryable) rather than 502.
 var ErrInvalidPayload = errors.New("event payload does not match expected schema for its type")
 
-// IsKnownEventType reports whether eventType is one of the 12 types this
+// IsKnownEventType reports whether eventType is one of the 11 types this
 // service routes (LLD §3.1). The handler checks this before calling
 // Ingest so an unknown type never even reaches recipient resolution.
 func IsKnownEventType(eventType string) bool {
