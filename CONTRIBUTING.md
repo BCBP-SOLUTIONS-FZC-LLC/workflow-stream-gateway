@@ -32,7 +32,7 @@ Layering is enforced by `.go-arch-lint.yml` (`make arch-lint`): `adapter`/`cmd` 
 
 ### Adding a new consumed event type
 
-1. Add the wire type to the routing table this repo expects from `event_consumer`'s `config/topology.yaml` (see `design/LLD/workflow_stream_gateway.md` §3.1 for the authoritative list).
+1. Add the wire type to the routing table this repo expects from `event_consumer`'s `config/topology.yaml` (see `docs/lld/workflow_stream_gateway.md` §3.1 for the authoritative list).
 2. Add the recipient-resolution rule to the fan-out usecase (LLD §6) if it doesn't already fit an existing event class.
 3. No new Valkey key shape is needed unless the event introduces a new routing dimension (e.g. tenant-wide broadcast, LLD Appendix B).
 

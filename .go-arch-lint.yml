@@ -1,5 +1,5 @@
 # go-arch-lint configuration — enforces the domain/usecase/adapter/cmd
-# layering from the LLD's repo skeleton (workflow_stream_gateway.md §10.1).
+# layering from the LLD's repo skeleton (docs/lld/workflow_stream_gateway.md §10.1).
 #
 # Run: go-arch-lint check --project-path .
 version: 2
