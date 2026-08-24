@@ -16,12 +16,30 @@ import (
 )
 
 type fakeEventStore struct {
-	appendCalls int
-	forceErr    error
+	appendCalls     int
+	broadcastCalls  int
+	departmentCalls int
+	forceErr        error
 }
 
 func (f *fakeEventStore) AppendEvent(_ context.Context, _, _, _ string, _ []byte) error {
 	f.appendCalls++
+	if f.forceErr != nil {
+		return f.forceErr
+	}
+	return nil
+}
+
+func (f *fakeEventStore) AppendBroadcastEvent(_ context.Context, _, _ string, _ []byte) error {
+	f.broadcastCalls++
+	if f.forceErr != nil {
+		return f.forceErr
+	}
+	return nil
+}
+
+func (f *fakeEventStore) AppendDepartmentEvent(_ context.Context, _, _, _ string, _ []byte) error {
+	f.departmentCalls++
 	if f.forceErr != nil {
 		return f.forceErr
 	}
@@ -60,6 +78,7 @@ func TestEventsHandler_Ingest_KnownTypeSuccess(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, 2, store.appendCalls)
+	assert.Equal(t, 1, store.broadcastCalls)
 }
 
 func TestEventsHandler_Ingest_UnknownTypeIgnoredWith200(t *testing.T) {
@@ -148,4 +167,5 @@ func TestEventsHandler_Ingest_ReassignedFansOutToTwo(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, 2, store.appendCalls)
+	assert.Equal(t, 1, store.broadcastCalls)
 }

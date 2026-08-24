@@ -80,7 +80,7 @@ func (h *StreamHandler) Stream(c *gin.Context) {
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 
-	_ = h.stream.Serve(c.Request.Context(), ticket.TenantID, ticket.UserID, lastEventID, ginFrameSink{w: c.Writer})
+	_ = h.stream.Serve(c.Request.Context(), ticket, lastEventID, ginFrameSink{w: c.Writer})
 }
 
 func recordConnectionRejected(reason string) {

@@ -84,7 +84,7 @@ func TestTicketHandler_Mint_Success(t *testing.T) {
 	req.Header.Set("x-user-id", "user-1")
 	req.Header.Set("x-tenant-id", "tenant-1")
 	req.Header.Set("x-tenant-roles", "admin,user")
-	req.Header.Set("x-departments", "dept-a, dept-b")
+	req.Header.Set("x-departments", "dept-a:approver, dept-b:reviewer")
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
@@ -99,7 +99,10 @@ func TestTicketHandler_Mint_Success(t *testing.T) {
 	for _, ticket := range store.tickets {
 		assert.Equal(t, "tenant-1", ticket.TenantID)
 		assert.Equal(t, "user-1", ticket.UserID)
-		assert.Equal(t, []string{"dept-a", "dept-b"}, ticket.Departments)
+		assert.Equal(t, []domain.DepartmentRole{
+			{DepartmentID: "dept-a", Role: "approver"},
+			{DepartmentID: "dept-b", Role: "reviewer"},
+		}, ticket.Departments)
 	}
 }
 
@@ -167,4 +170,22 @@ func TestTicketHandler_Mint_StoreUnavailable(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+func TestSplitDepartments(t *testing.T) {
+	assert.Nil(t, splitDepartments(""))
+	assert.Equal(t, []domain.DepartmentRole{
+		{DepartmentID: "dept-a", Role: "approver"},
+	}, splitDepartments("dept-a:approver"))
+	assert.Equal(t, []domain.DepartmentRole{
+		{DepartmentID: "dept-a", Role: "approver"},
+		{DepartmentID: "dept-b", Role: "reviewer"},
+	}, splitDepartments("dept-a:approver, dept-b:reviewer"))
+	// Missing ":" separator, or an empty ID half, is dropped rather than
+	// guessed at (matches execution_service's own fix for the identical
+	// wire format).
+	assert.Empty(t, splitDepartments("dept-a"))
+	assert.Equal(t, []domain.DepartmentRole{
+		{DepartmentID: "dept-a", Role: "approver"},
+	}, splitDepartments("dept-a:approver, malformed-no-colon, :empty-id"))
 }

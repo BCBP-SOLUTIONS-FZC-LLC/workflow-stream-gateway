@@ -9,10 +9,12 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
 // StreamStore implements usecase.StreamStore — the read side of the
-// per-user Valkey Stream EventStore writes to.
+// personal, tenant-wide, and per-department Valkey Streams EventStore
+// writes to.
 type StreamStore struct {
 	client redis.Cmdable
 }
@@ -42,10 +44,23 @@ func (s *StreamStore) RangeSince(ctx context.Context, tenantID, userID, afterID 
 	return toFrames(entries), nil
 }
 
-func (s *StreamStore) ReadNew(ctx context.Context, tenantID, userID string, block time.Duration) ([]domain.Frame, error) {
-	key := fmt.Sprintf("sse:events:%s:%s", tenantID, userID)
+// ReadNew issues one multi-key XREAD BLOCK across every given target's
+// stream (LLD §6) — cheaper than one round trip per target, and the only
+// way to block on N streams at once rather than N separate blocking
+// calls. Results come back grouped per-key; this flattens them in the
+// order targets were given (personal first, then tenant-wide-or-
+// departments) — cross-stream chronological interleaving is not
+// guaranteed, consistent with this service's existing no-aggregation
+// stance (LLD §7).
+func (s *StreamStore) ReadNew(ctx context.Context, targets []usecase.StreamTarget, block time.Duration) ([]domain.Frame, error) {
+	streams := make([]string, len(targets)*2)
+	for i, t := range targets {
+		streams[i] = keyFor(t)
+		streams[len(targets)+i] = "$"
+	}
+
 	res, err := s.client.XRead(ctx, &redis.XReadArgs{
-		Streams: []string{key, "$"},
+		Streams: streams,
 		Block:   block,
 		Count:   100,
 	}).Result()
@@ -55,10 +70,25 @@ func (s *StreamStore) ReadNew(ctx context.Context, tenantID, userID string, bloc
 	if err != nil {
 		return nil, fmt.Errorf("valkey xread: %w", err)
 	}
-	if len(res) == 0 {
-		return nil, nil
+
+	var frames []domain.Frame
+	for _, stream := range res {
+		frames = append(frames, toFrames(stream.Messages)...)
 	}
-	return toFrames(res[0].Messages), nil
+	return frames, nil
+}
+
+// keyFor derives the Valkey key for one stream target — the only place
+// this key-naming scheme is known outside EventStore's own writes.
+func keyFor(t usecase.StreamTarget) string {
+	switch {
+	case t.UserID != "":
+		return fmt.Sprintf("sse:events:%s:%s", t.TenantID, t.UserID)
+	case t.DepartmentID != "":
+		return fmt.Sprintf("sse:events:broadcast:%s:%s", t.TenantID, t.DepartmentID)
+	default:
+		return fmt.Sprintf("sse:events:broadcast:%s", t.TenantID)
+	}
 }
 
 func toFrames(entries []redis.XMessage) []domain.Frame {

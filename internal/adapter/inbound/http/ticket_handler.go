@@ -41,7 +41,7 @@ func (h *TicketHandler) Mint(c *gin.Context) {
 		TenantID:     rc.TenantID,
 		UserID:       rc.UserID,
 		TenantRoles:  rc.Roles,
-		Departments:  splitHeaderList(c.GetHeader(headerDepartments)),
+		Departments:  splitDepartments(c.GetHeader(headerDepartments)),
 		Plan:         c.GetHeader(headerPlan),
 		FeatureFlags: splitHeaderList(c.GetHeader(headerFeatureFlags)),
 		IssuedAt:     time.Now().UTC(),
@@ -84,6 +84,32 @@ func splitHeaderList(raw string) []string {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+// splitDepartments parses x-departments' "<department_id>:<role>" pairs —
+// mirrors execution_service's own callerDepartments() fix (2026-08-24): a
+// token missing the ":" separator is dropped rather than guessed at, since
+// this service has no schema to validate the ID half against (unlike
+// execution_service, which parses into a real uuid.UUID; this ticket
+// snapshot keeps it as a string, consistent with every other Ticket field).
+func splitDepartments(raw string) []domain.DepartmentRole {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]domain.DepartmentRole, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		deptID, role, found := strings.Cut(p, ":")
+		if !found || deptID == "" {
+			continue
+		}
+		out = append(out, domain.DepartmentRole{DepartmentID: deptID, Role: role})
 	}
 	return out
 }

@@ -73,8 +73,9 @@ type stopAfterOneStreamStore struct {
 	// readNewSeq lets a test exercise one or more live-tail iterations
 	// (a heartbeat timeout, then a delivered frame) before the store
 	// errors out and ends the loop deterministically.
-	readNewSeq []readNewResult
-	readNewIdx int
+	readNewSeq   []readNewResult
+	readNewIdx   int
+	readNewCalls [][]usecase.StreamTarget
 }
 
 type readNewResult struct {
@@ -91,7 +92,8 @@ func (s *stopAfterOneStreamStore) RangeSince(_ context.Context, _, _, _ string) 
 	return s.rangeFrames, nil
 }
 
-func (s *stopAfterOneStreamStore) ReadNew(_ context.Context, _, _ string, _ time.Duration) ([]domain.Frame, error) {
+func (s *stopAfterOneStreamStore) ReadNew(_ context.Context, targets []usecase.StreamTarget, _ time.Duration) ([]domain.Frame, error) {
+	s.readNewCalls = append(s.readNewCalls, targets)
 	if s.readNewIdx >= len(s.readNewSeq) {
 		return nil, errHandlerTestStop
 	}
@@ -217,6 +219,48 @@ func TestStreamHandler_Stream_LiveTailWritesHeartbeatAndFrame(t *testing.T) {
 	assert.Contains(t, body, "id: 200-0")
 	assert.Contains(t, body, "event: workflow.task.created")
 	assert.Contains(t, body, `data: {"x":1}`)
+}
+
+func TestStreamHandler_Stream_TenantWideEligibleTicketReadsBroadcastKeyToo(t *testing.T) {
+	ticketStore := &fakeTicketStore{tickets: map[string]domain.Ticket{
+		"tok": {TenantID: "tenant-a", UserID: "user-1", TenantRoles: []string{"tenant_admin"}},
+	}}
+	store := &stopAfterOneStreamStore{}
+	r := newStreamTestRouter(ticketStore, store, &alwaysAllowLimiter{allow: true})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream?ticket=tok", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, store.readNewCalls, 1)
+	assert.ElementsMatch(t, []usecase.StreamTarget{
+		{TenantID: "tenant-a", UserID: "user-1"},
+		{TenantID: "tenant-a"},
+	}, store.readNewCalls[0])
+}
+
+func TestStreamHandler_Stream_DepartmentEligibleTicketReadsDepartmentKeyToo(t *testing.T) {
+	ticketStore := &fakeTicketStore{tickets: map[string]domain.Ticket{
+		"tok": {
+			TenantID:    "tenant-a",
+			UserID:      "user-1",
+			Departments: []domain.DepartmentRole{{DepartmentID: "dept-a", Role: "approver"}},
+		},
+	}}
+	store := &stopAfterOneStreamStore{}
+	r := newStreamTestRouter(ticketStore, store, &alwaysAllowLimiter{allow: true})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream?ticket=tok", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, store.readNewCalls, 1)
+	assert.ElementsMatch(t, []usecase.StreamTarget{
+		{TenantID: "tenant-a", UserID: "user-1"},
+		{TenantID: "tenant-a", DepartmentID: "dept-a"},
+	}, store.readNewCalls[0])
 }
 
 func TestStreamHandler_Stream_BackfillBeyondWindowWritesResyncFrame(t *testing.T) {
