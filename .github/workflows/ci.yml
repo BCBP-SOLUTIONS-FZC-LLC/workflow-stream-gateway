@@ -1,3 +1,6 @@
+# ci-gate: lets a draft PR (or a PR labeled "skip-ci") skip the expensive
+# jobs below while iterating — never applies on push (a merge to main),
+# since github.event.pull_request.* only exists on pull_request events.
 name: CI
 
 "on":
@@ -20,20 +23,39 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        run: >
+          echo "run=${{
+            github.event_name != 'pull_request' ||
+            (github.event.pull_request.draft == false &&
+             !contains(github.event.pull_request.labels.*.name, 'skip-ci'))
+          }}" >> "$GITHUB_OUTPUT"
+
   validate-quality:
     name: Validate / Quality
+    needs: [ci-gate]
+    if: needs.ci-gate.outputs.run == 'true'
     uses: ./.github/workflows/validate-quality.yml
     secrets: inherit
 
   validate-test:
     name: Validate / Test
+    needs: [ci-gate]
+    if: needs.ci-gate.outputs.run == 'true'
     uses: ./.github/workflows/validate-test.yml
     secrets: inherit
 
   pr-summary:
     name: PR summary
     if: always() && github.event_name == 'pull_request'
-    needs: [validate-quality, validate-test]
+    needs: [ci-gate, validate-quality, validate-test]
     runs-on: ubuntu-latest
     steps:
-      - run: echo "validate-quality and validate-test are the gates for this repo."
+      - run: echo "validate-quality and validate-test are the gates for this repo (ci-gate run=${{ needs.ci-gate.outputs.run }})"
