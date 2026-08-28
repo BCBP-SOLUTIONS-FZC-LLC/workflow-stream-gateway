@@ -4,6 +4,8 @@ Real-time Server-Sent Events (SSE) dashboard push for the Workflow Engine platfo
 
 Full design: `docs/lld/workflow_stream_gateway.md` (this repo's in-repo copy of the design repo's LLD, kept content-identical to it; this repo implements that document — see it for the exact Valkey key schema, REST contracts, and design rationale). See also `ARCHITECTURE.md` (once written) and `CONTRIBUTING.md`.
 
+**API spec** — REST: `docs/swagger/openapi.yaml`, kept byte-identical to the design repo's `LLD/workflow_stream_gateway_openapi.yaml` sidecar.
+
 This service is stateless — Valkey is its only store (tickets, per-user event streams, connection/rate counters) — and runs no SQS/SNS consumer of its own. Event ingestion arrives via the platform's shared Workflow-Events Consumer (`event_consumer`) through a standard `POST /internal/events` handler.
 
 ## Configuration
