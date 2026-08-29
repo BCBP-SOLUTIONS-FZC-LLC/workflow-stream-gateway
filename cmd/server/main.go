@@ -70,9 +70,7 @@ func run() error {
 
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
-	// A separate port from srv (LLD §12, punch-list item 7): /metrics
 	// grants no API access, so NetworkPolicy can scope its own ingress
-	// independently of the API port's.
 	metricsSrv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.MetricsPort),
 		Handler: metricsMux,
