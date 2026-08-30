@@ -32,6 +32,14 @@ deps:
       - domain
   adapter:
     mayDependOn:
+      # Self-reference: internal/adapter/** is one component covering both
+      # internal/adapter/inbound/http (router.go) and its own
+      # internal/adapter/inbound/http/middleware sub-package — without this,
+      # go-arch-lint treats router.go's import of middleware as the
+      # component depending on itself and flags it (same pattern
+      # execution_service's/definition_service's own peer-leaf components
+      # need a self-reference for).
+      - adapter
       - domain
       - usecase
       - observability

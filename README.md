@@ -32,7 +32,7 @@ This service is stateless — Valkey is its only store (tickets, per-user event 
 docker compose up
 ```
 
-Brings up Valkey and the service. `curl localhost:8080/healthz` should return `200` once Valkey is reachable.
+Brings up Valkey and the service. `curl localhost:8080/healthz` returns `200` as soon as the process is up (no Valkey dependency — that's a liveness check); `curl localhost:8080/readyz` returns `200` once Valkey is reachable (a readiness check, so a Valkey blip pulls the pod out of rotation without Kubernetes restarting the process over it).
 
 To run against a Valkey you already have locally: `make dev` (reads `.env` if present).
 

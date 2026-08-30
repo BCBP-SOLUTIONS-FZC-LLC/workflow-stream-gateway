@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 )
 
 // Metric vars are nil until Register runs — callers outside this package
@@ -59,7 +61,11 @@ func register() {
 		Help: "Total Valkey Stream entries written by the fan-out path, by event_type.",
 	}, []string{"event_type"})
 
-	prometheus.MustRegister(
+	// gincommon.MetricsRegisterer(), not prometheus.DefaultRegisterer
+	// directly — keeps this package's collectors on the same registerer as
+	// gincommon's own HTTP metrics (its own doc comment's stated reason),
+	// which today is DefaultRegisterer but isn't guaranteed to stay so.
+	gincommon.MetricsRegisterer().MustRegister(
 		TicketsMintedTotal,
 		ConnectionsOpen,
 		ConnectionsRejectedTotal,
