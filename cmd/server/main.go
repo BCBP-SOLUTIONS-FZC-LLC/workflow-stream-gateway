@@ -31,13 +31,13 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	if err := run(); err != nil {
+	if err := run(logger); err != nil {
 		slog.Error("fatal", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -61,12 +61,18 @@ func run() error {
 		}
 	}()
 
-	observability.Register()
-
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: newRouter(cfg, client),
+		Handler: newRouter(cfg, client, logger),
 	}
+
+	// Register() must run after newRouter (which calls
+	// gincommon.ObservabilityMiddlewares, wiring in this process's real
+	// gincommon.MetricsRegisterer()) — registering this package's own
+	// collectors any earlier would fall back to gincommon's default
+	// pre-init registerer instead of the one gincommon.MetricsRegisterer's
+	// own doc comment promises callers.
+	observability.Register()
 
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())

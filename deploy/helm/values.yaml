@@ -100,7 +100,9 @@ startupProbe:
 
 livenessProbe:
   httpGet:
-    path: /healthz
+    path: /healthz # trivial "process is running" check — no Valkey dependency, so a
+                    # transient Valkey blip never causes Kubernetes to kill and restart
+                    # the pod (that's readinessProbe's job, below)
     port: 8080
   initialDelaySeconds: 0
   periodSeconds: 15
@@ -109,7 +111,8 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /healthz # this service has no distinct /readyz — /healthz already checks Valkey reachability
+    path: /readyz # pings Valkey (LLD §9.4's fail-closed posture) — failing this only
+                   # pulls the pod out of Service/HTTPRoute rotation, it never restarts it
     port: 8080
   initialDelaySeconds: 0
   periodSeconds: 10

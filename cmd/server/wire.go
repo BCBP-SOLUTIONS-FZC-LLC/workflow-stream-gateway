@@ -1,60 +1,40 @@
 package main
 
 import (
+	"log/slog"
+
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 
 	sgHTTP "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/inbound/http"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/inbound/http/middleware"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/sglog"
 	sgValkey "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/valkey"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
-// newRouter wires the gin.Engine: an unprotected /healthz, the
-// gateway-authenticated /api/v1 group (LLD §5.1's ticket-mint endpoint),
-// a separate /internal group guarded by RequireInternalToken (LLD §3.2,
-// never nested under /api/v1 so it never inherits ProtectedMiddlewares or
-// sees a gateway identity header), and GET /api/v1/stream registered
-// directly on the root engine — deliberately outside every auth
-// middleware group, since EventSource can't set an Authorization header
-// and the ticket it carries as a query param is validated by the handler
-// itself (LLD §5.2, §9.1).
-func newRouter(cfg *config.Config, client *redis.Client) *gin.Engine {
-	if cfg.AppEnv != "dev" {
-		gin.SetMode(gin.ReleaseMode)
-	}
+// serviceName is the gincommon Prometheus const label / OTEL service.name —
+// this service has no OTELServiceName config knob (unlike execution_service's
+// cfg.OTELServiceName), so it's a literal here, matching the pre-refactor
+// inline literal in the router-wiring this file replaces.
+const serviceName = "workflow-stream-gateway"
 
-	r := gin.New()
-	r.Use(gin.Recovery())
-
-	r.GET("/healthz", func(c *gin.Context) {
-		if err := client.Ping(c.Request.Context()).Err(); err != nil {
-			c.Status(503)
-			return
-		}
-		c.Status(200)
-	})
-
+// newRouter is this service's composition root: it builds every business-
+// object graph (ticket/fanout/stream services, their handlers) and the
+// shared gincommon config, then hands them to sgHTTP.NewRouter. main.go's
+// job is process lifecycle only (listen, signal handling, shutdown), not
+// construction — mirrors execution_service's/definition_service's own
+// cmd/server composition-root split.
+func newRouter(cfg *config.Config, client *redis.Client, log *slog.Logger) *gin.Engine {
 	ticketStore := sgValkey.NewTicketStore(client)
 	ticketService := usecase.NewTicketService(ticketStore, cfg.TicketTTL, cfg.TicketMintRateMax, cfg.TicketMintRateWindow)
 	ticketHandler := sgHTTP.NewTicketHandler(ticketService)
 
-	api := r.Group("/api/v1")
-	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{ServiceName: "workflow-stream-gateway"}) {
-		api.Use(mw)
-	}
-	api.POST("/stream/tickets", ticketHandler.Mint)
-
 	eventStore := sgValkey.NewEventStore(client, cfg.StreamRetentionWindow, cfg.StreamKeyTTL)
 	fanoutService := usecase.NewFanoutService(eventStore)
 	eventsHandler := sgHTTP.NewEventsHandler(fanoutService)
-
-	internalGroup := r.Group("/internal")
-	internalGroup.Use(middleware.RequireInternalToken(cfg.InternalAPIToken))
-	internalGroup.POST("/events", eventsHandler.Ingest)
 
 	streamStore := sgValkey.NewStreamStore(client)
 	connLimiter := sgValkey.NewConnectionLimiter(client)
@@ -67,7 +47,18 @@ func newRouter(cfg *config.Config, client *redis.Client) *gin.Engine {
 		cfg.ConnectionCapPerUser, connCountTTL, cfg.HeartbeatInterval,
 	)
 	streamHandler := sgHTTP.NewStreamHandler(streamService)
-	r.GET("/api/v1/stream", streamHandler.Stream)
 
-	return r
+	return sgHTTP.NewRouter(sgHTTP.RouterConfig{
+		GinConfig: gincommon.Config{
+			Logger:       sglog.New(log),
+			ServiceName:  serviceName,
+			BuildVersion: cfg.BuildVersion,
+		},
+		AppEnv:           cfg.AppEnv,
+		InternalAPIToken: cfg.InternalAPIToken,
+		ValkeyClient:     client,
+		TicketHandler:    ticketHandler,
+		EventsHandler:    eventsHandler,
+		StreamHandler:    streamHandler,
+	})
 }
