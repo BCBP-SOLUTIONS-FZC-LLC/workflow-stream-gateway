@@ -25,6 +25,7 @@
 | 1.2 | 2026-08-24 | Tenant-wide/per-department broadcast (§6) implemented and committed, superseding this document's own "no tenant-wide or role-based broadcast mode exists today" position (originally carried from `dashboard_stream_gateway.md`'s identically-unresolved Appendix B item). Two tiers, not an admin-only bypass: `tenant_admin`/`tenant_owner` get every known event tenant-wide; any role held in a department gets that department's task-scoped events. Required first fixing a genuine, independent pre-existing bug in `execution_service` (`x-departments`' `:role` half was never parsed before comparison, so department-scoped visibility silently never worked) — landed as its own fix in that repo, not folded into this service's own change. Backfill remains personal-tier-only (§8); the broadcast tiers' own lack of backfill is a new, deliberate limitation, not an oversight. |
 | 1.3 | 2026-08-24 | Resolves this document's own rev 1.1-flagged open item: whether the generic event relay is sufficient for business-service-owned UI surfaces. Workflow's own UI (configuring workflows, viewing graphs) and Tender's UI are distinct surfaces by design — this service relays generic facts, and each consuming business service (Tender included) renders its own UI from them. No bespoke per-consumer channel needed (Appendix B). |
 | 1.4 | 2026-08-24 | Reverses rev 1.2's "backfill remains personal-tier-only" limitation: the SSE `id:` line is now a compound cursor (§8, Appendix A Decision 16, superseding Decision 15), carrying a resume position per stream key a connection tails. A reconnecting `tenant_admin`/department-role connection now backfills its broadcast tier(s) too, not just its personal stream; any one tier's retention window being exceeded still resyncs the whole connection rather than partially replaying. Implemented and committed, not just designed. |
+| 1.5 | 2026-08-30 | Audited against the platform's own `gincommon`/`pgcommon` conventions and brought into line, not against any other service's choices. `cmd/server/router.go` (route-table wiring *and* full business-object construction inline, in `package main`) split into `internal/adapter/inbound/http/router.go` (route table + middleware only) and `cmd/server/wire.go` (composition root) — §10.1 updated. `gincommon.ObservabilityMiddlewares` added at the root — previously zero gincommon middleware applied to `GET /api/v1/stream` or `POST /internal/events`, and `gincommon.Config.Logger` had never been set, silently disabling gincommon's own request/panic logging since day one; a new `sglog` adapter fixes that — §11 updated. `gincommon.TimeoutMiddleware` scoped to `/api/v1`/`/internal` only, never root-wide (would cut off the SSE stream). Found and fixed a genuine operational risk while in there: liveness and readiness had shared one Valkey-ping endpoint — split into a trivial `/healthz` and a Valkey-checking `/readyz` (new §10.4, Appendix A Decision 17), so a transient Valkey blip no longer restarts the pod. |
 
 ---
 
@@ -337,7 +338,10 @@ Guarded by `x-internal-token` (§3.2), never reachable via the Envoy Gateway, an
 
 ```s
 workflow-stream-gateway/
-├── cmd/server/                       # main() — HTTP server only, no consumer goroutine
+├── cmd/server/
+│   ├── main.go                       # process lifecycle only — listen, signal handling, shutdown
+│   └── wire.go                       # composition root: builds the ticket/fanout/stream service
+│                                      # graphs and their handlers, then calls sgHTTP.NewRouter
 ├── internal/
 │   ├── domain/                       # ticket, connection, event-frame types
 │   ├── usecase/
@@ -346,9 +350,16 @@ workflow-stream-gateway/
 │   │   └── fanout.go                 # ingested envelope → per-recipient XADD (§3.2, §6)
 │   ├── adapter/
 │   │   ├── inbound/
-│   │   │   └── http/                 # ticket mint + SSE stream + /internal/events handlers
+│   │   │   └── http/
+│   │   │       ├── router.go         # NewRouter — route table + middleware only (§11); the
+│   │   │       │                     # single source of truth for this service's HTTP surface
+│   │   │       ├── ticket_handler.go
+│   │   │       ├── events_handler.go
+│   │   │       ├── stream_handler.go
+│   │   │       └── middleware/       # RequireInternalToken (§3.2)
 │   │   └── outbound/
-│   │       └── valkey/               # ticket store, streams, counters (go-redis/v9)
+│   │       ├── valkey/               # ticket store, streams, counters (go-redis/v9)
+│   │       └── sglog/                # adapts *slog.Logger to gincommon.Config.Logger (§11)
 │   └── config/
 ├── deploy/helm/templates/
 │   ├── httproute.yaml                # ticket-mint only; /stream is carved out (§5.2)
@@ -358,6 +369,8 @@ workflow-stream-gateway/
 └── go.mod
 ```
 
+Route-table wiring and business-object construction are deliberately split across two files, not combined the way an earlier revision of `cmd/server/router.go` did: `wire.go` builds every service/handler and the shared `gincommon.Config`, `router.go` only wires paths, groups, and middleware — mirroring the same composition-root/router split already established in `execution_service`'s and `definition_service`'s own `cmd/server`/`internal/adapter/inbound/http` layout (rev 1.5).
+
 ### 10.2 Scaling
 
 Scales on open-connection count, not request QPS — a different signal from every other service in this platform. Replica count, HPA metric, and graceful-drain behavior on rolling deploy are infra-owned, not designed in this document (Appendix B).
@@ -366,11 +379,17 @@ Scales on open-connection count, not request QPS — a different signal from eve
 
 `GET /api/v1/stream`'s carve-out from the standard gateway JWT-validation chain is a real, concrete change needed in the platform's Envoy/API-gateway routing configuration — not something this service's own Helm chart can unilaterally guarantee (Appendix B).
 
+### 10.4 Health probes
+
+`GET /healthz` is a trivial liveness check — process is running, no dependency call — and backs Kubernetes' `livenessProbe`. `GET /readyz` pings Valkey and backs `readinessProbe` only. The two are deliberately not the same endpoint: failing `/readyz` only pulls the pod out of Service/HTTPRoute rotation, while failing `/healthz` kills and restarts the process — a transient Valkey blip is exactly the kind of dependency hiccup this service didn't cause and shouldn't be restarted over (rev 1.5, Appendix A Decision 17).
+
 ---
 
 ## 11. Observability
 
-**Metrics:**
+**gincommon middleware:** `gincommon.ObservabilityMiddlewares` is applied at the root engine, ahead of every route — including `GET /api/v1/stream` and `POST /internal/events`, neither of which sits under `/api/v1`'s `ProtectedMiddlewares` group and would otherwise get no gincommon instrumentation at all. This gives every route gincommon's own `http_requests_total`/`http_request_duration_seconds`/tracing spans on top of the custom metrics below — one consequence worth noting: the SSE endpoint's request-duration/tracing span only completes at connection close, so it reports as one very-long-duration observation rather than per-request granularity, an inherent mismatch with a long-lived connection, not a bug. `gincommon.TimeoutMiddleware` is scoped to the `/api/v1` and `/internal` groups only — never applied root-wide, since that would also cut off the SSE stream, which must stay open (rev 1.5, Appendix A Decision 17). Registers via `gincommon.MetricsRegisterer()`, not `prometheus.MustRegister` on the default registry directly.
+
+**Custom metrics:**
 
 - `sse_tickets_minted_total{result}` (`result ∈ {ok, rate_limited, valkey_unavailable}`)
 - `sse_connections_open` (Gauge) — current open-connection count, the scaling signal (§10.2)
@@ -380,7 +399,7 @@ Scales on open-connection count, not request QPS — a different signal from eve
 
 **Heartbeat:** a `: keep-alive` comment frame every 15 seconds on every open connection (§7).
 
-**Logs:** structured `slog` JSON, matching the platform-wide convention, every line carrying `trace_id`/`tenant_id`/`user_id` where available.
+**Logs:** structured `slog` JSON, matching the platform-wide convention, every line carrying `trace_id`/`tenant_id`/`user_id` where available — including gincommon's own request/panic logs, wired via a small `sglog` adapter (`internal/adapter/outbound/sglog`) satisfying `gincommon.Config.Logger`'s port shape. Previously unset entirely, silently disabling gincommon's own logging since day one (rev 1.5).
 
 ---
 
@@ -430,6 +449,7 @@ Scales on open-connection count, not request QPS — a different signal from eve
 | 14 | The department tier only ever carries task-scoped events, never instance-scoped ones | `workflow_instance` has no `department_id` in `execution_service`'s domain model at all — confirmed structurally, not assumed — and a single instance's tasks can legitimately span multiple departments over its lifecycle, so there is no well-defined "the instance's department" to key a department stream on. |
 | 15 | Superseded 2026-08-24 (see Decision 16) — this row originally said tenant-wide/department broadcast tiers were never backfilled, only the personal tier was; that limitation was removed once the compound-cursor scheme below shipped. | — |
 | 16 | The SSE `id:` line is a compound cursor (`"<key>=<id>\|<key>=<id>..."`), one pair per stream key the connection tails, not a bare Stream ID (§8) | `EventSource` remembers exactly one `Last-Event-ID` value; a connection tailing 2+ streams needs that one string to carry every stream's resume position, or a quiet stream's position gets silently lost across reconnects. Reverses Decision 15's original personal-tier-only limitation. |
+| 17 | Liveness (`/healthz`) and readiness (`/readyz`) are separate endpoints, not one dependency-checking endpoint backing both | Found while auditing this service against the platform's `gincommon`/`pgcommon` conventions (rev 1.5): both probes previously pointed at the same Valkey-ping endpoint, so a transient Valkey blip would have caused Kubernetes to kill and restart the pod (liveness failure) rather than just pull it from load-balancer rotation (readiness failure) — a real operational risk, not a cosmetic gap. `/healthz` is now a bare "process is running" 200; `/readyz` carries the Valkey ping. |
 
 ---
 
