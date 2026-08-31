@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +15,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/valkey"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/config"
@@ -27,22 +28,35 @@ const shutdownTimeout = 10 * time.Second
 // version is set via -ldflags at build time (Makefile/Dockerfile).
 var version = "dev"
 
-func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+// Logger is the interface for the logger used by the application.
+// It is named locally since this service has no internal/core/port package of its own
+type Logger interface {
+	Debug(msg string, fields map[string]interface{})
+	Info(msg string, fields map[string]interface{})
+	Warn(msg string, fields map[string]interface{})
+	Error(msg string, fields map[string]interface{})
+}
 
-	if err := run(logger); err != nil {
-		slog.Error("fatal", "error", err)
+func main() {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fatal:", err)
+		os.Exit(1)
+	}
+
+	log, err := logger.NewLogger(cfg.AppEnv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fatal: init logger:", err)
+		os.Exit(1)
+	}
+
+	if err := run(cfg, log); err != nil {
+		log.Error("fatal", map[string]interface{}{"error": err.Error()})
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-
+func run(cfg *config.Config, log Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ValkeyDialTimeout)
 	client, err := valkey.NewClient(ctx, valkey.Options{
 		Addr:         cfg.ValkeyAddr,
@@ -57,13 +71,13 @@ func run(logger *slog.Logger) error {
 	}
 	defer func() {
 		if closeErr := client.Close(); closeErr != nil {
-			slog.Error("valkey close", "error", closeErr)
+			log.Error("valkey close", map[string]interface{}{"error": closeErr.Error()})
 		}
 	}()
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: newRouter(cfg, client, logger),
+		Handler: newRouter(cfg, client, log),
 	}
 
 	// Register() must run after newRouter (which calls
@@ -84,13 +98,13 @@ func run(logger *slog.Logger) error {
 
 	errCh := make(chan error, 2)
 	go func() {
-		slog.Info("listening", "port", cfg.HTTPPort, "version", version)
+		log.Info("listening", map[string]interface{}{"port": cfg.HTTPPort, "version": version})
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
 	go func() {
-		slog.Info("metrics listening", "port", cfg.MetricsPort)
+		log.Info("metrics listening", map[string]interface{}{"port": cfg.MetricsPort})
 		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
@@ -103,7 +117,7 @@ func run(logger *slog.Logger) error {
 	case err := <-errCh:
 		return err
 	case <-stop:
-		slog.Info("shutting down")
+		log.Info("shutting down", nil)
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)

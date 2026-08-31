@@ -1,15 +1,12 @@
 package main
 
 import (
-	"log/slog"
-
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 
 	sgHTTP "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/inbound/http"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/sglog"
 	sgValkey "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/valkey"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
@@ -27,7 +24,7 @@ const serviceName = "workflow-stream-gateway"
 // job is process lifecycle only (listen, signal handling, shutdown), not
 // construction — mirrors execution_service's/definition_service's own
 // cmd/server composition-root split.
-func newRouter(cfg *config.Config, client *redis.Client, log *slog.Logger) *gin.Engine {
+func newRouter(cfg *config.Config, client *redis.Client, log Logger) *gin.Engine {
 	ticketStore := sgValkey.NewTicketStore(client)
 	ticketService := usecase.NewTicketService(ticketStore, cfg.TicketTTL, cfg.TicketMintRateMax, cfg.TicketMintRateWindow)
 	ticketHandler := sgHTTP.NewTicketHandler(ticketService)
@@ -50,7 +47,7 @@ func newRouter(cfg *config.Config, client *redis.Client, log *slog.Logger) *gin.
 
 	return sgHTTP.NewRouter(sgHTTP.RouterConfig{
 		GinConfig: gincommon.Config{
-			Logger:       sglog.New(log),
+			Logger:       log,
 			ServiceName:  serviceName,
 			BuildVersion: cfg.BuildVersion,
 		},
