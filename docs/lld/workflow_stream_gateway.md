@@ -146,7 +146,7 @@ routes:
 
 The `wf-workflow-dash-q` SNS subscription's own filter policy (on the `EventType` message attribute, scoped to exactly the 11 types above) is infra provisioning outside any application repo — tracked in Appendix B, not designed here.
 
-**`workflow.instance.started` is deliberately not consumed** (decided 2026-08-24, resolving the contradiction this document previously flagged in its own routing table): `execution_service`'s own `api/asyncapi.yaml` documents it as "not routed to the Dashboard Stream Gateway — the creating client already knows synchronously." This document now sides with that spec rather than carrying the contradiction forward.
+**`workflow.instance.started` is not consumed**: the creating client already knows synchronously."
 
 **Consumed event payload reference.** All 11 types above are owned and registered by `workflow-execution-svc` — this service never re-derives or re-documents their field-level schemas, only what each means for dashboard push. The authoritative payload shape for each lives in `execution_service`'s own `api/asyncapi.yaml` (`components.messages.<Name>`); this table is the business-meaning layer on top, matching the convention `execution_service.md` §6.2 and `definition_service.md` §7.4 already use for their own consumed events, following IAM's own AsyncAPI second-layer-documentation convention (per-field description, not just wire shape).
 
@@ -241,9 +241,9 @@ Specified in full in §3.2.
 
 ## 6. Fan-Out Routing
 
-Every known event is written to up to three tiers of Valkey Stream (§4) — decided 2026-08-24, replacing this document's original "every routing decision resolves to a specific `user_id`" position after the user rejected an admin-only-bypass design in favor of a general (tenant, role) / (department, role) model: every role gets a complete feed for its own scope, not just a privileged subset, and a user holding roles in multiple departments gets all of them.
+Every known event is written to up to three tiers of Valkey Stream (§4) — decided 2026-08-24, after rejecting an admin-only-bypass design in favor of a general (tenant, role) / (department, role) model: every role gets a complete feed for its own scope, not just a privileged subset, and a user holding roles in multiple departments gets all of them.
 
-### 6.1 Personal tier (unchanged)
+### 6.1 Personal tier
 
 Routing key: `(tenant_id, user_id)`, derived per-event from the payload's own recipient field(s) — no lookup, no enrichment.
 
@@ -301,7 +301,7 @@ data: {"id":"018f2c3e-6b1a-7c40-9e2f-...","type":"workflow.task.completed","sour
 **Store: Valkey Streams** (§4) — unifies live delivery and backfill in one mechanism and one data structure. No Gateway replica needs to "own" a given user in memory, and no sticky/consistent-hash routing is required at the load balancer: any replica that accepts a connection or reconnection can serve it, since it reads the same Valkey keys any other replica would.
 
 - **Fresh connection** (no `last_event_id`): `XREAD` starting at `$` (now) — across every stream key the connection is eligible for (§6.4), one multi-key `XREAD BLOCK` call.
-- **The SSE `id:` line is a compound cursor, not a bare Stream ID** (revised 2026-08-24, superseding personal-tier-only backfill): `"<key1>=<id1>|<key2>=<id2>"`, one pair per stream key the connection is currently tailing (§4's key-naming scheme), reflecting the connection's full resume position across every tier after each frame — not just the ID of the stream that frame happened to come from. This is necessary because a browser's native `EventSource` remembers exactly one `Last-Event-ID` value and echoes it back verbatim on reconnect; a connection tailing 2–4 streams at once (personal plus tenant-wide, or personal plus N departments) needs that one string to carry every stream's position, not just whichever one emitted most recently.
+- **The SSE `id:` line is a compound cursor, not a bare Stream ID**: `"<key1>=<id1>|<key2>=<id2>"`, one pair per stream key the connection is currently tailing (§4's key-naming scheme), reflecting the connection's full resume position across every tier after each frame — not just the ID of the stream that frame happened to come from. This is necessary because a browser's native `EventSource` remembers exactly one `Last-Event-ID` value and echoes it back verbatim on reconnect; a connection tailing 2–4 streams at once (personal plus tenant-wide, or personal plus N departments) needs that one string to carry every stream's position, not just whichever one emitted most recently.
 - **Reconnecting** (`last_event_id` present, via header or query param, compound-formatted): decode it into per-key positions, keep only the keys matching streams this connection is *currently* eligible for (a key from a department the ticket no longer holds is dropped, never trusted as identity — §9.1's "identity from the ticket, never the client" stance extends to this string's contents too), then `XRANGE key (<last_id> +` per surviving key, replay oldest-first per key, then continue live-tailing every eligible key. A key absent from the incoming cursor (fresh connection, or a tier the ticket only just gained) gets no backfill for that one stream — not an error, the same "no `last_event_id` → replay nothing" behavior as before, just decided per-key instead of connection-wide. A malformed or pre-2026-08-24 bare-ID `last_event_id` decodes to no valid pairs at all and degrades the same way as a fresh connection.
 - **Beyond the 10-minute window** (or a stream key itself expired), for *any* one of the keys being backfilled: no partial replay is attempted for that key, and the **whole connection** gets `event: resync-required` / `data: {"reason":"backfill_window_exceeded"}`, then resumes live-tailing every eligible key from `$`. Partial replay — some streams caught up, others silently gapped — was judged worse than the frontend's existing full-REST-refetch fallback, so one lagging tier still resyncs the whole connection rather than resyncing just itself.
 - **No dedup table.** A duplicate SSE delivery (native reconnect, or an `/internal/events` retry per §3.2) is harmless — an idempotent frontend reducer applying "task X completed" twice is a no-op.
@@ -369,7 +369,7 @@ workflow-stream-gateway/
 └── go.mod
 ```
 
-Route-table wiring and business-object construction are deliberately split across two files, not combined the way an earlier revision of `cmd/server/router.go` did: `wire.go` builds every service/handler and the shared `gincommon.Config`, `router.go` only wires paths, groups, and middleware — mirroring the same composition-root/router split already established in `execution_service`'s and `definition_service`'s own `cmd/server`/`internal/adapter/inbound/http` layout (rev 1.5).
+Route-table wiring and business-object construction are split across two files: `wire.go` builds every service/handler and the shared `gincommon.Config`, `router.go` only wires paths, groups, and middleware — mirroring the same composition-root/router split already established in `execution_service`'s and `definition_service`'s own `cmd/server`/`internal/adapter/inbound/http` layout.
 
 ### 10.2 Scaling
 
@@ -399,7 +399,7 @@ Scales on open-connection count, not request QPS — a different signal from eve
 
 **Heartbeat:** a `: keep-alive` comment frame every 15 seconds on every open connection (§7).
 
-**Logs:** structured `slog` JSON, matching the platform-wide convention, every line carrying `trace_id`/`tenant_id`/`user_id` where available — including gincommon's own request/panic logs, wired via a small `sglog` adapter (`internal/adapter/outbound/sglog`) satisfying `gincommon.Config.Logger`'s port shape. Previously unset entirely, silently disabling gincommon's own logging since day one (rev 1.5).
+**Logs:** structured `slog` JSON, matching the platform-wide convention, every line carrying `trace_id`/`tenant_id`/`user_id` where available — including gincommon's own request/panic logs, wired via a small `sglog` adapter (`internal/adapter/outbound/sglog`) satisfying `gincommon.Config.Logger`'s port shape.
 
 ---
 
@@ -447,9 +447,9 @@ Scales on open-connection count, not request QPS — a different signal from eve
 | 12 | No websocket anywhere in this design — neither the `event_consumer`-facing hop nor the browser-facing hop | Both hops are one-directional push only; a websocket only pays off when a bidirectional need exists, and neither side of this service has one (§2.5). |
 | 13 | Broadcast (§6) is a two-tier (tenant-wide, per-department) model, not an admin-only bypass — every role gets a complete feed for its own scope, and a user with roles in multiple departments gets all of them | Decided 2026-08-24 after rejecting an earlier "admin sees everything, nobody else gets anything extra" design. Eligibility reuses `execution_service`'s real `tenant_admin`/`tenant_owner` role names (this platform has no platform-level `"admin"` role at all). Required fixing an independent, pre-existing bug in `execution_service` first: `x-departments`' `<department_id>:<role>` pairs were never split on `:` before comparison, so department-scoped visibility silently never matched. |
 | 14 | The department tier only ever carries task-scoped events, never instance-scoped ones | `workflow_instance` has no `department_id` in `execution_service`'s domain model at all — confirmed structurally, not assumed — and a single instance's tasks can legitimately span multiple departments over its lifecycle, so there is no well-defined "the instance's department" to key a department stream on. |
-| 15 | Superseded 2026-08-24 (see Decision 16) — this row originally said tenant-wide/department broadcast tiers were never backfilled, only the personal tier was; that limitation was removed once the compound-cursor scheme below shipped. | — |
-| 16 | The SSE `id:` line is a compound cursor (`"<key>=<id>\|<key>=<id>..."`), one pair per stream key the connection tails, not a bare Stream ID (§8) | `EventSource` remembers exactly one `Last-Event-ID` value; a connection tailing 2+ streams needs that one string to carry every stream's resume position, or a quiet stream's position gets silently lost across reconnects. Reverses Decision 15's original personal-tier-only limitation. |
-| 17 | Liveness (`/healthz`) and readiness (`/readyz`) are separate endpoints, not one dependency-checking endpoint backing both | Found while auditing this service against the platform's `gincommon`/`pgcommon` conventions (rev 1.5): both probes previously pointed at the same Valkey-ping endpoint, so a transient Valkey blip would have caused Kubernetes to kill and restart the pod (liveness failure) rather than just pull it from load-balancer rotation (readiness failure) — a real operational risk, not a cosmetic gap. `/healthz` is now a bare "process is running" 200; `/readyz` carries the Valkey ping. |
+| 15 | Superseded — see Decision 16 and Revision history. | — |
+| 16 | The SSE `id:` line is a compound cursor (`"<key>=<id>\|<key>=<id>..."`), one pair per stream key the connection tails, not a bare Stream ID (§8) | `EventSource` remembers exactly one `Last-Event-ID` value; a connection tailing 2+ streams needs that one string to carry every stream's resume position, or a quiet stream's position gets silently lost across reconnects. |
+| 17 | Liveness (`/healthz`) and readiness (`/readyz`) are separate endpoints, not one dependency-checking endpoint backing both | Sharing one dependency-checking endpoint between liveness and readiness means a transient Valkey blip causes Kubernetes to kill and restart the pod (liveness failure) rather than just pull it from load-balancer rotation (readiness failure) — a real operational risk, not a cosmetic gap. `/healthz` is a bare "process is running" 200; `/readyz` carries the Valkey ping. |
 
 ---
 
