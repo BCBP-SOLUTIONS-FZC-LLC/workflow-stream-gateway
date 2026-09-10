@@ -21,12 +21,13 @@
 | Version | Date | Notes |
 | --- | --- | --- |
 | 1.0 | 2026-08-21 | Initial formal LLD, superseding the `dashboard_stream_gateway.md` proposal. Carries forward every still-sound design decision from that document (ticket-authenticated SSE, per-`(tenant_id,user_id)` Valkey Stream fan-out, wire format, reconnection/backfill, isolation model) at full spec rigor (exact Valkey key schema, exact REST contracts, a companion OpenAPI file). One decision reversed after re-derivation from first principles, not carried forward as-is: event ingestion routes through the platform's existing shared Workflow-Events Consumer (`event_consumer`) via a standard `POST /internal/events` handler, rather than this service running its own dedicated SQS consumer — the proposal's stated reason for rejecting that (`dashboard_stream_gateway.md` Design Decision #2) does not survive scrutiny once its own §7 confirms this service needs no delivery-idempotency guarantee at all (§9.2 below). This removes an entire SQS/SNS-consumer component from this service's own scope. |
-| 1.1 | 2026-08-24 | All 5 build phases implemented and committed (repo `workflow-stream-gateway`) — this document now describes shipped code, not a pre-build design. `workflow.instance.started` removed from the consumed-event set (§3.1), resolving this document's own previously-flagged routing/spec contradiction by siding with `execution_service`'s `asyncapi.yaml`. Flagged, not resolved: whether this service's generic event relay is sufficient for business-service-owned UI surfaces, or whether such services need their own push channel (Appendix B). |
+| 1.1 | 2026-08-24 | All 5 build phases implemented and committed (repo `workflow-stream-gateway`) — this document now describes shipped code, not a pre-build design. `WorkflowInstanceStarted` removed from the consumed-event set (§3.1), resolving this document's own previously-flagged routing/spec contradiction by siding with `execution_service`'s `asyncapi.yaml`. Flagged, not resolved: whether this service's generic event relay is sufficient for business-service-owned UI surfaces, or whether such services need their own push channel (Appendix B). |
 | 1.2 | 2026-08-24 | Tenant-wide/per-department broadcast (§6) implemented and committed, superseding this document's own "no tenant-wide or role-based broadcast mode exists today" position (originally carried from `dashboard_stream_gateway.md`'s identically-unresolved Appendix B item). Two tiers, not an admin-only bypass: `tenant_admin`/`tenant_owner` get every known event tenant-wide; any role held in a department gets that department's task-scoped events. Required first fixing a genuine, independent pre-existing bug in `execution_service` (`x-departments`' `:role` half was never parsed before comparison, so department-scoped visibility silently never worked) — landed as its own fix in that repo, not folded into this service's own change. Backfill remains personal-tier-only (§8); the broadcast tiers' own lack of backfill is a new, deliberate limitation, not an oversight. |
 | 1.3 | 2026-08-24 | Resolves this document's own rev 1.1-flagged open item: whether the generic event relay is sufficient for business-service-owned UI surfaces. Workflow's own UI (configuring workflows, viewing graphs) and Tender's UI are distinct surfaces by design — this service relays generic facts, and each consuming business service (Tender included) renders its own UI from them. No bespoke per-consumer channel needed (Appendix B). |
 | 1.4 | 2026-08-24 | Reverses rev 1.2's "backfill remains personal-tier-only" limitation: the SSE `id:` line is now a compound cursor (§8, Appendix A Decision 16, superseding Decision 15), carrying a resume position per stream key a connection tails. A reconnecting `tenant_admin`/department-role connection now backfills its broadcast tier(s) too, not just its personal stream; any one tier's retention window being exceeded still resyncs the whole connection rather than partially replaying. Implemented and committed, not just designed. |
 | 1.5 | 2026-08-30 | Audited against the platform's own `gincommon`/`pgcommon` conventions and brought into line, not against any other service's choices. `cmd/server/router.go` (route-table wiring *and* full business-object construction inline, in `package main`) split into `internal/adapter/inbound/http/router.go` (route table + middleware only) and `cmd/server/wire.go` (composition root) — §10.1 updated. `gincommon.ObservabilityMiddlewares` added at the root — previously zero gincommon middleware applied to `GET /api/v1/stream` or `POST /internal/events`, and `gincommon.Config.Logger` had never been set, silently disabling gincommon's own request/panic logging since day one; a new `sglog` adapter fixed that — §11 updated. `gincommon.TimeoutMiddleware` scoped to `/api/v1`/`/internal` only, never root-wide (would cut off the SSE stream). Found and fixed a genuine operational risk while in there: liveness and readiness had shared one Valkey-ping endpoint — split into a trivial `/healthz` and a Valkey-checking `/readyz` (new §10.4, Appendix A Decision 17), so a transient Valkey blip no longer restarts the pod. |
 | 1.6 | 2026-08-31 | The rev 1.5 `sglog` adapter is replaced with `platform-gincommon/pkg/logger.NewLogger` (Zap-backed) called directly, matching `execution_service`/`definition_service`/`iam-user-profile`'s already-established logger convention (Appendix A Decision 18) — verified directly against those three repos and against `platform-gincommon/pkg/logger`'s own package doc comment, not assumed. The returned logger already satisfies `gincommon.Config.Logger`'s port, so no adapter package is needed at all; `internal/adapter/outbound/sglog` is deleted (§10.1, §11 updated). |
+| 1.7 | 2026-09-10 | All 11 consumed wire types are PascalCase (`WorkflowTaskCreated`, etc.), matching `execution_service`'s own outbound event-catalogue migration and the platform-wide IAM naming convention — not dotted-lowercase as previously documented and implemented. §3.1's const block, its routing-config example, and §6's payload-reference table (which previously carried the dotted form and the AsyncAPI message name as two separate columns — now the same string, collapsed to one column) are all updated; `internal/usecase/fanout.go` and its tests are the corresponding code change. |
 
 ---
 
@@ -101,7 +102,7 @@ One binary, `cmd/server`, one deployable. Unlike Execution Service (`cmd/server`
 `workflow_hld.md` historically carried two mutually exclusive descriptions of how a state change reaches the browser: one where Execution Service itself holds SSE connections, driven by a Postgres `NOTIFY` trigger (§8.3), and one where a separate gateway subscribes to domain events and holds the connections instead (§9.1). This document's model — and the superseded proposal's before it — adopts the latter and rejects the former outright, not as complementary paths:
 
 - **The Signal-Only API pattern** (Execution's own architectural principle, `execution_service.md` §1.2) already commits Execution's HTTP/gRPC layer to holding no long-lived per-client state; a DB-trigger-driven, Execution-hosted SSE connection is exactly the kind of statefulness that principle exists to keep out of that process.
-- **The Outbox pattern** already produces the event this service needs (`workflow.task.completed` and the rest of the catalogue, §3.1) with a durability guarantee a `NOTIFY` firing with no listener attached does not have — `NOTIFY` is fire-and-forget; a missed notification is lost forever, unlike an outbox row, which survives until a consumer actually delivers it.
+- **The Outbox pattern** already produces the event this service needs (`WorkflowTaskCompleted` and the rest of the catalogue, §3.1) with a durability guarantee a `NOTIFY` firing with no listener attached does not have — `NOTIFY` is fire-and-forget; a missed notification is lost forever, unlike an outbox row, which survives until a consumer actually delivers it.
 - The stated purpose of real-time sync — near-real-time updates "without stressing the backend services with thousands of long-lived connections" — is only true if Execution *doesn't* hold those connections itself.
 
 The same Temporal Activity transaction that writes `workflow_task`/`workflow_instance` already inserts the corresponding outbox row (`execution_service.md` §7) — nothing on Execution's side changes because this service exists.
@@ -132,38 +133,38 @@ queues:
   - name: dashboard
     url: https://sqs.<region>.amazonaws.com/<account>/wf-workflow-dash-q
 routes:
-  workflow.task.created: [workflow-stream-gateway]
-  workflow.task.completed: [workflow-stream-gateway]
-  workflow.task.deferred: [workflow-stream-gateway]
-  workflow.task.reassigned: [workflow-stream-gateway]
-  workflow.task.sla-warning: [workflow-stream-gateway]
-  workflow.task.sla-breached: [workflow-stream-gateway]
-  workflow.instance.paused: [workflow-stream-gateway]
-  workflow.instance.resumed: [workflow-stream-gateway]
-  workflow.instance.cancelled: [workflow-stream-gateway]
-  workflow.instance.terminated: [workflow-stream-gateway]
-  workflow.instance.finished: [workflow-stream-gateway]
+  WorkflowTaskCreated: [workflow-stream-gateway]
+  WorkflowTaskCompleted: [workflow-stream-gateway]
+  WorkflowTaskDeferred: [workflow-stream-gateway]
+  WorkflowTaskReassigned: [workflow-stream-gateway]
+  WorkflowTaskSlaWarning: [workflow-stream-gateway]
+  WorkflowTaskSlaBreached: [workflow-stream-gateway]
+  WorkflowInstancePaused: [workflow-stream-gateway]
+  WorkflowInstanceResumed: [workflow-stream-gateway]
+  WorkflowInstanceCancelled: [workflow-stream-gateway]
+  WorkflowInstanceTerminated: [workflow-stream-gateway]
+  WorkflowInstanceFinished: [workflow-stream-gateway]
 ```
 
 The `wf-workflow-dash-q` SNS subscription's own filter policy (on the `EventType` message attribute, scoped to exactly the 11 types above) is infra provisioning outside any application repo — tracked in Appendix B, not designed here.
 
-**`workflow.instance.started` is not consumed**: the creating client already knows synchronously."
+**`WorkflowInstanceStarted` is not consumed**: the creating client already knows synchronously."
 
-**Consumed event payload reference.** All 11 types above are owned and registered by `workflow-execution-svc` — this service never re-derives or re-documents their field-level schemas, only what each means for dashboard push. The authoritative payload shape for each lives in `execution_service`'s own `api/asyncapi.yaml` (`components.messages.<Name>`); this table is the business-meaning layer on top, matching the convention `execution_service.md` §6.2 and `definition_service.md` §7.4 already use for their own consumed events, following IAM's own AsyncAPI second-layer-documentation convention (per-field description, not just wire shape).
+**Consumed event payload reference.** All 11 types above are owned and registered by `workflow-execution-svc` — this service never re-derives or re-documents their field-level schemas, only what each means for dashboard push. The authoritative payload shape for each lives in `execution_service`'s own `api/asyncapi.yaml` (`components.messages.<Name>`, the same PascalCase name as the wire type itself); this table is the business-meaning layer on top, matching the convention `execution_service.md` §6.2 and `definition_service.md` §7.4 already use for their own consumed events, following IAM's own AsyncAPI second-layer-documentation convention (per-field description, not just wire shape).
 
-| Wire type | Business meaning (for dashboard push) | `execution_service/api/asyncapi.yaml` message |
-| --- | --- | --- |
-| `workflow.task.created` | A task was assigned; add it to the recipient's live list. | `WorkflowTaskCreated` |
-| `workflow.task.completed` | A task's stage transitioned (incl. a caller-agnostic Complete); reconcile any optimistic UI update. | `WorkflowTaskCompleted` |
-| `workflow.task.deferred` | A task regressed to an earlier node (stage-defer); tell the preparator it was sent back. | `WorkflowTaskDeferred` |
-| `workflow.task.reassigned` | A task moved between assignees (admin reassign, node-override, or delegation reroute) — routes to both `old_user_id` (remove from list) and `new_user_id` (add to list), per §6. | `WorkflowTaskReassigned` |
-| `workflow.task.sla-warning` | A task's follow-up deadline elapsed unresolved; nudge the assignee. | `WorkflowTaskSlaWarning` |
-| `workflow.task.sla-breached` | A task's due-date elapsed unresolved; escalate. | `WorkflowTaskSlaBreached` |
-| `workflow.instance.paused` | An instance paused (admin action, tenant-state dispatch, or OOO safety-net); reflect the paused state live. | `WorkflowInstancePaused` |
-| `workflow.instance.resumed` | An instance resumed (admin action, tenant-state dispatch, OOO-restored, or a DEGRADED instance's force-forward/force-back resolution). | `WorkflowInstanceResumed` |
-| `workflow.instance.cancelled` | An instance was cancelled; every active task failed/vacated. | `WorkflowInstanceCancelled` |
-| `workflow.instance.terminated` | An instance was terminated directly (admin action); its open tasks failed. | `WorkflowInstanceTerminated` |
-| `workflow.instance.finished` | An instance reached its BPMN terminal node cleanly. | `WorkflowInstanceFinished` |
+| Wire type | Business meaning (for dashboard push) |
+| --- | --- |
+| `WorkflowTaskCreated` | A task was assigned; add it to the recipient's live list. |
+| `WorkflowTaskCompleted` | A task's stage transitioned (incl. a caller-agnostic Complete); reconcile any optimistic UI update. |
+| `WorkflowTaskDeferred` | A task regressed to an earlier node (stage-defer); tell the preparator it was sent back. |
+| `WorkflowTaskReassigned` | A task moved between assignees (admin reassign, node-override, or delegation reroute) — routes to both `old_user_id` (remove from list) and `new_user_id` (add to list), per §6. |
+| `WorkflowTaskSlaWarning` | A task's follow-up deadline elapsed unresolved; nudge the assignee. |
+| `WorkflowTaskSlaBreached` | A task's due-date elapsed unresolved; escalate. |
+| `WorkflowInstancePaused` | An instance paused (admin action, tenant-state dispatch, or OOO safety-net); reflect the paused state live. |
+| `WorkflowInstanceResumed` | An instance resumed (admin action, tenant-state dispatch, OOO-restored, or a DEGRADED instance's force-forward/force-back resolution). |
+| `WorkflowInstanceCancelled` | An instance was cancelled; every active task failed/vacated. |
+| `WorkflowInstanceTerminated` | An instance was terminated directly (admin action); its open tasks failed. |
+| `WorkflowInstanceFinished` | An instance reached its BPMN terminal node cleanly. |
 
 ### 3.2 `POST /internal/events`
 
@@ -250,9 +251,9 @@ Routing key: `(tenant_id, user_id)`, derived per-event from the payload's own re
 
 | Event class | Recipient field(s) | Recipients |
 | --- | --- | --- |
-| Task-scoped (`workflow.task.*`, except reassigned) | `assignee_user_ids[]` | every user in the array |
-| `workflow.task.reassigned` | `old_user_id`, `new_user_id` | both — the old assignee needs "removed from your list," the new one needs "added to your list" |
-| Instance-scoped (`workflow.instance.*`) | `started_by_user_id` | always |
+| Task-scoped (`WorkflowTask*`, except reassigned) | `assignee_user_ids[]` | every user in the array |
+| `WorkflowTaskReassigned` | `old_user_id`, `new_user_id` | both — the old assignee needs "removed from your list," the new one needs "added to your list" |
+| Instance-scoped (`WorkflowInstance*`) | `started_by_user_id` | always |
 
 For each recipient, the `/internal/events` handler (§3.2) writes one entry into that user's Valkey Stream — a task with three assignees produces three `XADD` calls from one ingested envelope.
 
@@ -284,8 +285,8 @@ Frame shape:
 
 ```text
 id: 1721734567123-0
-event: workflow.task.completed
-data: {"id":"018f2c3e-6b1a-7c40-9e2f-...","type":"workflow.task.completed","source":"workflow-execution-svc","specversion":"1","tenant_id":"6f1e2b90-...","trace_id":"7e115i6800e67gd9d6f252g313b7069","correlation_id":"","subject":"instances/b6e2b6f0-.../tasks/...","actor":"","ip_address":"","user_agent":"","dataschema":"","time":"2026-07-23T10:02:33.100Z","data":{"workflow_instance_id":"b6e2b6f0-...","business_key":"TND-2026-04471","task_id":"...","node_key":"approve-final","assignee_user_ids":["..."],"completed_by_user_id":"..."}}
+event: WorkflowTaskCompleted
+data: {"id":"018f2c3e-6b1a-7c40-9e2f-...","type":"WorkflowTaskCompleted","source":"workflow-execution-svc","specversion":"1","tenant_id":"6f1e2b90-...","trace_id":"7e115i6800e67gd9d6f252g313b7069","correlation_id":"","subject":"instances/b6e2b6f0-.../tasks/...","actor":"","ip_address":"","user_agent":"","dataschema":"","time":"2026-07-23T10:02:33.100Z","data":{"workflow_instance_id":"b6e2b6f0-...","business_key":"TND-2026-04471","task_id":"...","node_key":"approve-final","assignee_user_ids":["..."],"completed_by_user_id":"..."}}
 
 ```
 
@@ -420,7 +421,7 @@ Scales on open-connection count, not request QPS — a different signal from eve
 ## 13. Testing Strategy
 
 - **Ticket lifecycle:** mint → validate → expire; reusable-within-TTL behavior (a second `GET /api/v1/stream` with the same still-valid ticket succeeds, matching native `EventSource` reconnect on a brief blip).
-- **Fan-out correctness:** one ingested envelope with N recipients produces exactly N `XADD` calls, correct key per recipient; `workflow.task.reassigned` produces exactly 2 (`old_user_id`, `new_user_id`), never conflated.
+- **Fan-out correctness:** one ingested envelope with N recipients produces exactly N `XADD` calls, correct key per recipient; `WorkflowTaskReassigned` produces exactly 2 (`old_user_id`, `new_user_id`), never conflated.
 - **Partial-failure retry semantics (§3.2):** simulate a Valkey write failure on recipient 2 of 3 — assert `502`, and that a subsequent retry's duplicate `XADD` to recipients 1 and 3 is harmless (stream contains the duplicate, not an error).
 - **Reconnect/backfill:** `XRANGE`-based replay within the 10-minute window; `resync-required` frame beyond it.
 - **Isolation:** a ticket minted for `(tenant A, user 1)` can never read `(tenant A, user 2)`'s or `(tenant B, user 1)`'s stream — construct a `GET /api/v1/stream` call attempting to pass a client-supplied `tenant_id`/`user_id` and assert it's ignored entirely (identity comes only from the ticket).
@@ -457,6 +458,6 @@ Scales on open-connection count, not request QPS — a different signal from eve
 ## Appendix B: Open Items
 
 - **The Envoy/API-gateway route-config carve-out for `GET /api/v1/stream`** (§5.2, §10.3) — a cross-team ask to whoever owns that configuration, same unresolved status the superseded proposal already carried.
-- **Resolved 2026-08-24 — whether this service's generic event relay is sufficient for business-service-owned UI surfaces (e.g. Tender's own dashboard needs): yes.** Workflow's own UI (configuring workflows, viewing graphs, etc.) is a distinct surface from Tender's UI — this service was never meant to serve Tender's UI directly. Workflow sends its generic `workflow.task.*`/`workflow.instance.*` facts to Tender; Tender renders whatever its own UI needs from those facts. No bespoke per-consumer channel is required.
+- **Resolved 2026-08-24 — whether this service's generic event relay is sufficient for business-service-owned UI surfaces (e.g. Tender's own dashboard needs): yes.** Workflow's own UI (configuring workflows, viewing graphs, etc.) is a distinct surface from Tender's UI — this service was never meant to serve Tender's UI directly. Workflow sends its generic `WorkflowTask*`/`WorkflowInstance*` facts to Tender; Tender renders whatever its own UI needs from those facts. No bespoke per-consumer channel is required.
 - **Task-scoped broadcast beyond the department tier is deferred** — a genuine tenant-wide "every task event, not just instance events" firehose already exists for `tenant_admin`/`tenant_owner` (§6.2 already carries all types), but no additional broadcast shape beyond the two tiers built 2026-08-24 (tenant-wide, per-department) has been designed. Revisit if a real requirement emerges.
 - **Broadcast connection-count impact is unmeasured** — a `tenant_admin` connection now live-tails N+1 (or more) Valkey Streams per open SSE connection instead of 1; the existing `sse:conncount` cap (§9.3, still counted per-connection, not per-stream-read) and the `XREAD` fan-in cost at scale haven't been load-tested against this.

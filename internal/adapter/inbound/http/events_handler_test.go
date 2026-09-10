@@ -63,7 +63,7 @@ func postEvent(r *gin.Engine, body string) *httptest.ResponseRecorder {
 
 const validTaskCreatedEnvelope = `{
 	"id": "018f2c3e-6b1a-7c40-9e2f-000000000001",
-	"type": "workflow.task.created",
+	"type": "WorkflowTaskCreated",
 	"source": "workflow-execution-svc",
 	"tenant_id": "tenant-a",
 	"time": "2026-08-21T10:00:00Z",
@@ -125,7 +125,7 @@ func TestEventsHandler_Ingest_MissingRequiredFieldReturns400(t *testing.T) {
 	r, _ := newEventsTestRouter(store)
 
 	// Missing "id".
-	body := `{"type":"workflow.task.created","source":"workflow-execution-svc","time":"2026-08-21T10:00:00Z","data":{}}`
+	body := `{"type":"WorkflowTaskCreated","source":"workflow-execution-svc","time":"2026-08-21T10:00:00Z","data":{}}`
 	rec := postEvent(r, body)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
@@ -136,7 +136,7 @@ func TestEventsHandler_Ingest_KnownTypeInvalidPayloadReturns400(t *testing.T) {
 	r, _ := newEventsTestRouter(store)
 
 	body := `{
-		"id": "1", "type": "workflow.task.created", "source": "workflow-execution-svc",
+		"id": "1", "type": "WorkflowTaskCreated", "source": "workflow-execution-svc",
 		"time": "2026-08-21T10:00:00Z", "data": {"assignee_user_ids": "not-an-array"}
 	}`
 	rec := postEvent(r, body)
@@ -159,7 +159,7 @@ func TestEventsHandler_Ingest_ReassignedFansOutToTwo(t *testing.T) {
 	r, _ := newEventsTestRouter(store)
 
 	body := `{
-		"id": "1", "type": "workflow.task.reassigned", "source": "workflow-execution-svc",
+		"id": "1", "type": "WorkflowTaskReassigned", "source": "workflow-execution-svc",
 		"time": "2026-08-21T10:00:00Z", "tenant_id": "tenant-a",
 		"data": {"old_user_id": "old-1", "new_user_id": "new-1", "assignee_user_ids": ["new-1"]}
 	}`

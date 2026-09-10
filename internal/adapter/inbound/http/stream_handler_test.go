@@ -223,7 +223,7 @@ func TestStreamHandler_Stream_LiveTailWritesHeartbeatAndFrame(t *testing.T) {
 	store := &stopAfterOneStreamStore{
 		readNewSeq: []readNewResult{
 			{frames: nil}, // timeout -> heartbeat comment
-			{frames: []domain.Frame{{ID: "200-0", EventType: "workflow.task.created", Data: []byte(`{"x":1}`), SourceKey: "sse:events:tenant-a:user-1"}}},
+			{frames: []domain.Frame{{ID: "200-0", EventType: "WorkflowTaskCreated", Data: []byte(`{"x":1}`), SourceKey: "sse:events:tenant-a:user-1"}}},
 		},
 	}
 	r := newStreamTestRouter(ticketStore, store, &alwaysAllowLimiter{allow: true})
@@ -238,7 +238,7 @@ func TestStreamHandler_Stream_LiveTailWritesHeartbeatAndFrame(t *testing.T) {
 	// The SSE "id:" line is the full compound resume cursor (LLD §8), not
 	// the bare stream ID — the frame's own key=id pair is in there.
 	assert.Contains(t, body, "id: sse:events:tenant-a:user-1=200-0")
-	assert.Contains(t, body, "event: workflow.task.created")
+	assert.Contains(t, body, "event: WorkflowTaskCreated")
 	assert.Contains(t, body, `data: {"x":1}`)
 }
 

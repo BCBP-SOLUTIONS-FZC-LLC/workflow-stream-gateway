@@ -10,7 +10,7 @@ import (
 // The 11 wire types this service consumes (LLD §3.1). Payload schemas are
 // owned by execution_service's own api/asyncapi.yaml — verified there
 // (2026-08-21) that every task-scoped payload carries "assignee_user_ids"
-// ([]string) and "department_id" (string), workflow.task.reassigned
+// ([]string) and "department_id" (string), WorkflowTaskReassigned
 // additionally carries "old_user_id"/"new_user_id" (both string), and
 // every instance-scoped payload carries "started_by_user_id" (string) and
 // — as of that verification — no active-assignees field at all, despite
@@ -22,7 +22,7 @@ import (
 // has no department_id column; a single instance's tasks can legitimately
 // span multiple departments over its lifecycle).
 //
-// workflow.instance.started is deliberately NOT in this list (decided
+// WorkflowInstanceStarted is deliberately NOT in this list (decided
 // 2026-08-24, resolving the routing-table contradiction the LLD itself
 // had flagged): execution_service's own asyncapi.yaml documents it as
 // "not routed to the Dashboard Stream Gateway — the creating client
@@ -30,17 +30,17 @@ import (
 // ignored with 200 (IsKnownEventType below), so a producer that hasn't
 // caught up to this decision never breaks delivery here.
 const (
-	eventTaskCreated        = "workflow.task.created"
-	eventTaskCompleted      = "workflow.task.completed"
-	eventTaskDeferred       = "workflow.task.deferred"
-	eventTaskReassigned     = "workflow.task.reassigned"
-	eventTaskSLAWarning     = "workflow.task.sla-warning"
-	eventTaskSLABreached    = "workflow.task.sla-breached"
-	eventInstancePaused     = "workflow.instance.paused"
-	eventInstanceResumed    = "workflow.instance.resumed"
-	eventInstanceCancelled  = "workflow.instance.cancelled"
-	eventInstanceTerminated = "workflow.instance.terminated"
-	eventInstanceFinished   = "workflow.instance.finished"
+	eventTaskCreated        = "WorkflowTaskCreated"
+	eventTaskCompleted      = "WorkflowTaskCompleted"
+	eventTaskDeferred       = "WorkflowTaskDeferred"
+	eventTaskReassigned     = "WorkflowTaskReassigned"
+	eventTaskSLAWarning     = "WorkflowTaskSlaWarning"
+	eventTaskSLABreached    = "WorkflowTaskSlaBreached"
+	eventInstancePaused     = "WorkflowInstancePaused"
+	eventInstanceResumed    = "WorkflowInstanceResumed"
+	eventInstanceCancelled  = "WorkflowInstanceCancelled"
+	eventInstanceTerminated = "WorkflowInstanceTerminated"
+	eventInstanceFinished   = "WorkflowInstanceFinished"
 )
 
 var taskAssigneeEvents = map[string]bool{

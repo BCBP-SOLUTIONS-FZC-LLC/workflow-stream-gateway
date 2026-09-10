@@ -129,7 +129,7 @@ components:
         The canonical platform-events wire envelope (platform-events/pkg/events/envelope.go),
         forwarded verbatim by event_consumer. Payload (`data`) is opaque here — this
         service dispatches on `type` without a strict per-type schema, matching the
-        platform-wide /internal/events convention (unrecognized types are accepted
+        platform-wide /api/v1/internal/events convention (unrecognized types are accepted
         and ignored with 200).
       required: [id, type, source, time]
       properties:
@@ -141,11 +141,11 @@ components:
           type: string
           description: >
             Dotted-lowercase wire type. One of the 12 types this service's
-            wf-workflow-dash-q subscription is filtered to: workflow.task.created,
+            wf-workflow-dash-q subscription is filtered to: WorkflowTaskCreated,
             .completed, .deferred, .reassigned, .sla-warning, .sla-breached,
-            workflow.instance.started, .paused, .resumed, .cancelled, .terminated,
+            WorkflowInstanceStarted, .paused, .resumed, .cancelled, .terminated,
             .finished. Any other value is accepted and ignored with 200.
-          example: "workflow.task.completed"
+          example: "WorkflowTaskCompleted"
         source:
           type: string
           example: "workflow-execution-svc"
@@ -284,7 +284,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
-  /internal/events:
+  /api/v1/internal/events:
     post:
       operationId: ingestInternalEvent
       tags: [Internal (Events)]
@@ -293,7 +293,7 @@ paths:
         Service-to-service ingest endpoint called by event_consumer (the shared
         Workflow-Events Consumer), which subscribes wf-workflow-dash-q and
         forwards each envelope here over HTTP, matching the identical
-        /internal/events convention execution_service and definition_service
+        /api/v1/internal/events convention execution_service and definition_service
         already ship. Not exposed on the public Envoy gateway; carries no
         gateway identity headers. No dedup/idempotency table exists here —
         duplicate delivery is harmless (workflow_stream_gateway.md §9.2).

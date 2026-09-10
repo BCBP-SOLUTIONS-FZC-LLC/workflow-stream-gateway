@@ -76,7 +76,7 @@ func TestIsKnownEventType(t *testing.T) {
 	assert.False(t, IsKnownEventType(""))
 	// Decided 2026-08-24: not consumed, matches execution_service's own
 	// asyncapi.yaml ("the creating client already knows synchronously").
-	assert.False(t, IsKnownEventType("workflow.instance.started"))
+	assert.False(t, IsKnownEventType("WorkflowInstanceStarted"))
 }
 
 func TestFanoutService_Ingest_TaskEventFansOutToAllAssignees(t *testing.T) {
@@ -87,7 +87,7 @@ func TestFanoutService_Ingest_TaskEventFansOutToAllAssignees(t *testing.T) {
 		EventType:   eventTaskCreated,
 		TenantID:    "tenant-a",
 		Payload:     []byte(`{"assignee_user_ids":["u1","u2","u3"],"department_id":"dept-a"}`),
-		RawEnvelope: []byte(`{"type":"workflow.task.created"}`),
+		RawEnvelope: []byte(`{"type":"WorkflowTaskCreated"}`),
 	})
 
 	require.NoError(t, err)

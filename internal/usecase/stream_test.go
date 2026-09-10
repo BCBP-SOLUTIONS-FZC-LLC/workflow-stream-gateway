@@ -219,8 +219,8 @@ func TestStreamService_Serve_BackfillWithinWindow(t *testing.T) {
 		oldestID:     "100-0",
 		oldestExists: true,
 		rangeFrames: []domain.Frame{
-			{ID: "150-0", EventType: "workflow.task.completed", Data: []byte(`{}`)},
-			{ID: "160-0", EventType: "workflow.task.completed", Data: []byte(`{}`)},
+			{ID: "150-0", EventType: "WorkflowTaskCompleted", Data: []byte(`{}`)},
+			{ID: "160-0", EventType: "WorkflowTaskCompleted", Data: []byte(`{}`)},
 		},
 	}
 	svc := newTestStreamService(store, &fakeLimiter{})
@@ -301,11 +301,11 @@ func TestStreamService_Serve_BackfillCoversTenantWideBroadcastToo(t *testing.T) 
 		perTarget: map[string]fakeTargetState{
 			testPersonalKey: {
 				oldestID: "100-0", oldestExists: true,
-				rangeFrames: []domain.Frame{{ID: "150-0", EventType: "workflow.task.completed", Data: []byte(`{}`)}},
+				rangeFrames: []domain.Frame{{ID: "150-0", EventType: "WorkflowTaskCompleted", Data: []byte(`{}`)}},
 			},
 			broadcastKey: {
 				oldestID: "100-0", oldestExists: true,
-				rangeFrames: []domain.Frame{{ID: "155-0", EventType: "workflow.instance.paused", Data: []byte(`{}`)}},
+				rangeFrames: []domain.Frame{{ID: "155-0", EventType: "WorkflowInstancePaused", Data: []byte(`{}`)}},
 			},
 		},
 	}
@@ -390,7 +390,7 @@ func TestStreamService_Serve_LiveTailCursorCarriesPersonalPositionForward(t *tes
 			broadcastKey: {oldestExists: false},
 		},
 		readNewSeq: []readNewResult{
-			{frames: []domain.Frame{{ID: "300-0", EventType: "workflow.instance.paused", Data: []byte(`{}`), SourceKey: broadcastKey}}},
+			{frames: []domain.Frame{{ID: "300-0", EventType: "WorkflowInstancePaused", Data: []byte(`{}`), SourceKey: broadcastKey}}},
 		},
 	}
 	svc := newTestStreamService(store, &fakeLimiter{})
@@ -421,7 +421,7 @@ func TestStreamService_Serve_LiveTailDeliversFrames(t *testing.T) {
 	store := &fakeStreamStore{
 		readNewSeq: []readNewResult{
 			{frames: nil}, // timeout -> heartbeat
-			{frames: []domain.Frame{{ID: "200-0", EventType: "workflow.task.created", Data: []byte(`{}`), SourceKey: testPersonalKey}}},
+			{frames: []domain.Frame{{ID: "200-0", EventType: "WorkflowTaskCreated", Data: []byte(`{}`), SourceKey: testPersonalKey}}},
 		},
 	}
 	svc := newTestStreamService(store, &fakeLimiter{})
