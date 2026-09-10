@@ -125,7 +125,7 @@ readinessProbe:
 # access despite their own LLDs prescribing a named allow-list). This
 # chart has no legacy to match, so it's done right from day one: only the
 # gateway/ingress (ticket-mint + eventually the SSE stream route, LLD
-# Appendix B) and event_consumer (POST /internal/events) may reach the API
+# Appendix B) and event_consumer (POST /api/v1/internal/events) may reach the API
 # port — no other same-namespace pod has any reason to call this service.
 networkPolicy:
   enabled: true
@@ -133,7 +133,7 @@ networkPolicy:
     kubernetes.io/metadata.name: envoy-gateway-system
   ingressControllerPodSelector: {}
   # event_consumer's own pod labels — the only other legitimate caller of
-  # this service's API port (POST /internal/events, LLD §3.2).
+  # this service's API port (POST /api/v1/internal/events, LLD §3.2).
   eventConsumerPodSelector:
     app.kubernetes.io/name: workflow-events-consumer
   metricsIngress:
@@ -154,7 +154,7 @@ serviceMonitor:
   namespaceSelector: {}
 
 # Ingress — disabled by default. Only /api/v1/stream/tickets and
-# /api/v1/stream are ever exposed through the Gateway; POST /internal/events
+# /api/v1/stream are ever exposed through the Gateway; POST /api/v1/internal/events
 # is reached in-cluster via the Service directly (LLD §3.2), never routed
 # here. GET /api/v1/stream's own carve-out from the standard JWT/ext_authz
 # chain (LLD §5.2, §10.3) is Gateway-level configuration outside any

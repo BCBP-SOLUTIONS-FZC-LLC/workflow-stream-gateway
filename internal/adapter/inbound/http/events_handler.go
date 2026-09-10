@@ -14,7 +14,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
-// EventsHandler implements POST /internal/events (LLD §3.2) — the sole
+// EventsHandler implements POST /api/v1/internal/events (LLD §3.2) — the sole
 // ingestion path onto this service, forwarded verbatim by event_consumer.
 type EventsHandler struct {
 	fanout *usecase.FanoutService
@@ -41,7 +41,7 @@ func (h *EventsHandler) Ingest(c *gin.Context) {
 
 	// Forward-compatibility: an event type this service doesn't know about
 	// is accepted and ignored with 200, the same convention every other
-	// /internal/events handler in this platform uses (LLD §3.2 step 2).
+	// /api/v1/internal/events handler in this platform uses (LLD §3.2 step 2).
 	if !usecase.IsKnownEventType(envelope.Type) {
 		recordEventIngest(envelope.Type, "ok")
 		c.Status(http.StatusOK)

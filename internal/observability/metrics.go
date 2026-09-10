@@ -53,7 +53,7 @@ func register() {
 	// identically-shaped internal_events_ingest_total) — not pre-inited.
 	EventsIngestTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "internal_events_ingest_total",
-		Help: "Total POST /internal/events calls, by event_type and result.",
+		Help: "Total POST /api/v1/internal/events calls, by event_type and result.",
 	}, []string{"event_type", "result"})
 
 	FramesWrittenTotal = prometheus.NewCounterVec(prometheus.CounterOpts{

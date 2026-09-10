@@ -18,7 +18,7 @@ import (
 )
 
 // shortRequestTimeout bounds POST /api/v1/stream/tickets and POST
-// /internal/events, the two ordinary request/response endpoints — neither
+// /api/v1/internal/events, the two ordinary request/response endpoints — neither
 // has an LLD-documented SLO (docs/lld/workflow_stream_gateway.md is silent
 // on this), so this matches execution_service's/definition_service's own
 // 30-second convention rather than inventing a number. Deliberately not
@@ -45,9 +45,10 @@ type RouterConfig struct {
 // NewRouter wires the gin.Engine.
 //
 // ObservabilityMiddlewares is applied at the root, ahead of every route, so
-// metrics/logging/tracing cover GET /api/v1/stream and POST /internal/events
-// too — neither sits under /api/v1's ProtectedMiddlewares group, and would
-// otherwise get no gincommon middleware at all.
+// metrics/logging/tracing cover GET /api/v1/stream and POST
+// /api/v1/internal/events too — neither sits under /api/v1's
+// ProtectedMiddlewares group, and would otherwise get no gincommon
+// middleware at all.
 //
 // /healthz is a trivial liveness check (process is running, no dependency
 // call) and /readyz pings Valkey (readiness — LLD §9.4's fail-closed
@@ -56,15 +57,16 @@ type RouterConfig struct {
 // over a dependency blip it didn't cause).
 //
 // /api/v1 carries LLD §5.1's ticket-mint endpoint behind
-// ProtectedMiddlewares. /internal is a separate group guarded by
-// RequireInternalToken (LLD §3.2) — never nested under /api/v1, so it never
+// ProtectedMiddlewares. /api/v1/internal is a separate group guarded by
+// RequireInternalToken (LLD §3.2) — never nested under the /api/v1 group
+// above (it shares the path segment, not the gin group), so it never
 // inherits ProtectedMiddlewares or sees a gateway identity header. GET
 // /api/v1/stream is registered directly on the root engine, deliberately
 // outside every auth middleware group: EventSource can't set an
 // Authorization header, and the ticket it carries as a query param is
 // validated by the handler itself (LLD §5.2, §9.1).
 //
-// TimeoutMiddleware is scoped to the /api/v1 and /internal groups only
+// TimeoutMiddleware is scoped to the /api/v1 and /api/v1/internal groups only
 // (ahead of each group's own auth middleware, per TimeoutMiddleware's own
 // doc comment), not applied at the root the way execution_service's/
 // definition_service's routers do — root-wide here would also cut off GET
@@ -95,7 +97,11 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	}
 	api.POST("/stream/tickets", cfg.TicketHandler.Mint)
 
-	internalGroup := r.Group("/internal")
+	// Versioned under /api/v1/internal (not nested under the /api/v1 group
+	// above — see the doc comment below) to match execution_service's and
+	// definition_service's own convention, so event_consumer's forwarder can
+	// target one shared path shape across every service it forwards to.
+	internalGroup := r.Group("/api/v1/internal")
 	internalGroup.Use(gincommon.TimeoutMiddleware(shortRequestTimeout))
 	internalGroup.Use(middleware.RequireInternalToken(cfg.InternalAPIToken))
 	internalGroup.POST("/events", cfg.EventsHandler.Ingest)

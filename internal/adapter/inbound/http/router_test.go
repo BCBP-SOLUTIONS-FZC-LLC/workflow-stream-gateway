@@ -76,7 +76,7 @@ func TestNewRouter_InternalEvents_RequiresToken(t *testing.T) {
 	r := NewRouter(cfg)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/internal/events", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", nil))
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code, "a missing x-internal-token must be rejected before reaching the handler")
 }
@@ -86,7 +86,7 @@ func TestNewRouter_InternalEvents_TokenDisabled_ReachesHandler(t *testing.T) {
 	r := NewRouter(testRouterConfig())
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/internal/events", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", nil))
 
 	// An empty configured token disables RequireInternalToken entirely
 	// (local/dev only); the request reaches EventsHandler.Ingest, which

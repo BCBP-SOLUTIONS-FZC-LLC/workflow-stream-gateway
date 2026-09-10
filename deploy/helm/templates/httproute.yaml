@@ -6,7 +6,7 @@
 # For CORS and gateway-level rate limiting, enable ingress.securityPolicy.
 #
 # Only /api/v1/stream/tickets and /api/v1/stream are ever listed here.
-# POST /internal/events is never routed through this HTTPRoute — it's
+# POST /api/v1/internal/events is never routed through this HTTPRoute — it's
 # reached in-cluster via the Service directly (LLD §3.2). GET
 # /api/v1/stream's own carve-out from the standard JWT/ext_authz chain
 # (LLD §5.2, §10.3) is Gateway-level configuration this HTTPRoute doesn't

@@ -25,7 +25,7 @@ type Config struct {
 	ValkeyReadTimeout  time.Duration
 	ValkeyWriteTimeout time.Duration
 
-	// InternalAPIToken guards POST /internal/events (LLD §3.2's
+	// InternalAPIToken guards POST /api/v1/internal/events (LLD §3.2's
 	// RequireInternalToken) — empty disables the check (dev only).
 	InternalAPIToken string
 

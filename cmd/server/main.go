@@ -2,7 +2,7 @@
 // ordinary HTTP server with no background consumer goroutine and no
 // Temporal dependency (LLD §2.2): every inbound path is a plain HTTP
 // handler, since event ingestion arrives via event_consumer's own
-// POST /internal/events convention rather than a dedicated SQS consumer.
+// POST /api/v1/internal/events convention rather than a dedicated SQS consumer.
 package main
 
 import (
