@@ -48,7 +48,7 @@ func register() {
 		Help: "Total GET /api/v1/stream connections rejected, by reason.",
 	}, []string{"reason"})
 
-	// event_type is open-ended in spirit despite today's 12-value
+	// event_type is open-ended in spirit despite today's 11-value
 	// catalogue (matches execution_service's own precedent for its
 	// identically-shaped internal_events_ingest_total) — not pre-inited.
 	EventsIngestTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
