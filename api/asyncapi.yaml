@@ -1,0 +1,134 @@
+asyncapi: 3.0.0
+info:
+  title: workflow-stream-gateway events
+  version: 1.0.0
+  description: >
+    Inbound only. The shared Workflow-Events Consumer forwards the Workflow
+    Execution Service's lifecycle events from the wf-workflow-dash-q queue to
+    POST /api/v1/internal/events. Their payload schemas are owned and registered
+    by the producing service and are not re-registered here. Any other event type
+    is acknowledged with 200 and ignored. This service publishes no events.
+
+channels:
+  wf/workflow/dash:
+    address: wf-workflow-dash-q
+    description: Consumed off the dashboard queue and forwarded over HTTP by the Workflow-Events Consumer.
+    bindings:
+      sqs:
+        queue:
+          name: wf-workflow-dash-q
+          fifoQueue: false
+    messages:
+      WorkflowTaskCreated: { $ref: '#/components/messages/WorkflowTaskCreated' }
+      WorkflowTaskCompleted: { $ref: '#/components/messages/WorkflowTaskCompleted' }
+      WorkflowTaskDeferred: { $ref: '#/components/messages/WorkflowTaskDeferred' }
+      WorkflowTaskReassigned: { $ref: '#/components/messages/WorkflowTaskReassigned' }
+      WorkflowTaskSlaWarning: { $ref: '#/components/messages/WorkflowTaskSlaWarning' }
+      WorkflowTaskSlaBreached: { $ref: '#/components/messages/WorkflowTaskSlaBreached' }
+      WorkflowInstancePaused: { $ref: '#/components/messages/WorkflowInstancePaused' }
+      WorkflowInstanceResumed: { $ref: '#/components/messages/WorkflowInstanceResumed' }
+      WorkflowInstanceCancelled: { $ref: '#/components/messages/WorkflowInstanceCancelled' }
+      WorkflowInstanceTerminated: { $ref: '#/components/messages/WorkflowInstanceTerminated' }
+      WorkflowInstanceFinished: { $ref: '#/components/messages/WorkflowInstanceFinished' }
+
+operations:
+  receiveWorkflowEvents:
+    action: receive
+    channel: { $ref: '#/channels/wf~1workflow~1dash' }
+    description: >
+      Each event is appended to the Valkey Stream of every recipient it concerns.
+      2xx means handled, 400 means malformed (not retried), 502 means a transient
+      Valkey failure (retried). A redelivery appends a duplicate entry, which
+      clients tolerate by frame id.
+
+components:
+  messages:
+    WorkflowTaskCreated:
+      name: WorkflowTaskCreated
+      x-lifecycle: { status: active }
+      description: A task-scoped event routed to the task's assignees and its department.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/TaskScopedPayload' }
+    WorkflowTaskCompleted:
+      name: WorkflowTaskCompleted
+      x-lifecycle: { status: active }
+      description: A task-scoped event routed to the task's assignees and its department.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/TaskScopedPayload' }
+    WorkflowTaskDeferred:
+      name: WorkflowTaskDeferred
+      x-lifecycle: { status: active }
+      description: A task-scoped event routed to the task's assignees and its department.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/TaskScopedPayload' }
+    WorkflowTaskReassigned:
+      name: WorkflowTaskReassigned
+      x-lifecycle: { status: active }
+      description: A task reassignment routed to the old and new assignee and the department.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/ReassignedPayload' }
+    WorkflowTaskSlaWarning:
+      name: WorkflowTaskSlaWarning
+      x-lifecycle: { status: active }
+      description: A task-scoped event routed to the task's assignees and its department.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/TaskScopedPayload' }
+    WorkflowTaskSlaBreached:
+      name: WorkflowTaskSlaBreached
+      x-lifecycle: { status: active }
+      description: A task-scoped event routed to the task's assignees and its department.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/TaskScopedPayload' }
+    WorkflowInstancePaused:
+      name: WorkflowInstancePaused
+      x-lifecycle: { status: active }
+      description: An instance-scoped event routed to the instance's starter.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/InstanceScopedPayload' }
+    WorkflowInstanceResumed:
+      name: WorkflowInstanceResumed
+      x-lifecycle: { status: active }
+      description: An instance-scoped event routed to the instance's starter.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/InstanceScopedPayload' }
+    WorkflowInstanceCancelled:
+      name: WorkflowInstanceCancelled
+      x-lifecycle: { status: active }
+      description: An instance-scoped event routed to the instance's starter.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/InstanceScopedPayload' }
+    WorkflowInstanceTerminated:
+      name: WorkflowInstanceTerminated
+      x-lifecycle: { status: active }
+      description: An instance-scoped event routed to the instance's starter.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/InstanceScopedPayload' }
+    WorkflowInstanceFinished:
+      name: WorkflowInstanceFinished
+      x-lifecycle: { status: active }
+      description: An instance-scoped event routed to the instance's starter.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/InstanceScopedPayload' }
+
+  schemas:
+    TaskScopedPayload:
+      type: object
+      additionalProperties: true
+      required: [assignee_user_ids, department_id]
+      properties:
+        assignee_user_ids: { type: array, items: { type: string, format: uuid } }
+        department_id: { type: string, format: uuid }
+    ReassignedPayload:
+      type: object
+      additionalProperties: true
+      required: [old_user_id, new_user_id, department_id]
+      properties:
+        old_user_id: { type: string, format: uuid }
+        new_user_id: { type: string, format: uuid }
+        department_id: { type: string, format: uuid }
+    InstanceScopedPayload:
+      type: object
+      additionalProperties: true
+      required: [started_by_user_id]
+      properties:
+        started_by_user_id: { type: string, format: uuid }

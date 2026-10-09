@@ -126,7 +126,7 @@ components:
     Envelope:
       type: object
       description: >
-        The canonical platform-events wire envelope (platform-events/pkg/events/envelope.go),
+        The canonical platform-events wire envelope (platform-events/v2/pkg/events/envelope.go),
         forwarded verbatim by event_consumer. Payload (`data`) is opaque here — this
         service dispatches on `type` without a strict per-type schema, matching the
         platform-wide /api/v1/internal/events convention (unrecognized types are accepted
@@ -207,6 +207,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TicketMintResponse'
+        "413":
+          description: Request body larger than 10 MiB. Non-retryable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         "429":
           description: Ticket-mint rate limit exceeded (10/minute per tenant+user).
           content:
@@ -318,6 +324,12 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         "401":
           description: Missing or invalid x-internal-token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "413":
+          description: Request body larger than 10 MiB. Non-retryable.
           content:
             application/problem+json:
               schema:

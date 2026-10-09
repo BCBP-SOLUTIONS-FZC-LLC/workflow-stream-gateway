@@ -110,6 +110,7 @@ func tagSourceKey(key string, frames []domain.Frame) []domain.Frame {
 }
 
 type fakeLimiter struct {
+	refreshed  int
 	acquireOK  bool
 	acquireErr error
 	released   bool
@@ -118,6 +119,11 @@ type fakeLimiter struct {
 
 func (f *fakeLimiter) TryAcquire(_ context.Context, _, _ string, _ int, _ time.Duration) (bool, error) {
 	return f.acquireOK, f.acquireErr
+}
+
+func (f *fakeLimiter) Refresh(_ context.Context, _, _ string, _ time.Duration) error {
+	f.refreshed++
+	return nil
 }
 
 func (f *fakeLimiter) Release(_ context.Context, _, _ string) error {
@@ -433,6 +439,18 @@ func TestStreamService_Serve_LiveTailDeliversFrames(t *testing.T) {
 	assert.Equal(t, 1, sink.heartbeats)
 	require.Len(t, sink.frames, 1)
 	assert.Equal(t, "200-0", decodeCursor(sink.frames[0].ID)[testPersonalKey])
+}
+
+func TestStreamService_Serve_RefreshesTheConnectionCountWhileOpen(t *testing.T) {
+	store := &fakeStreamStore{
+		readNewSeq: []readNewResult{{frames: nil}, {frames: nil}, {frames: nil}},
+	}
+	limiter := &fakeLimiter{}
+	svc := newTestStreamService(store, limiter)
+
+	_ = svc.Serve(context.Background(), testTicket(), "", &fakeSink{})
+
+	assert.Equal(t, 3, limiter.refreshed, "every wake-up of a live connection keeps its counter from expiring")
 }
 
 func TestStreamService_Serve_ContextCancellationEndsCleanly(t *testing.T) {

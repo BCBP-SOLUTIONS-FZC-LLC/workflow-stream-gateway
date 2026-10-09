@@ -70,5 +70,24 @@ jobs:
       - name: Arch-lint
         run: make arch-lint
 
+      - name: Observability standard lint
+        run: make metrics-lint
+
+      - uses: azure/setup-helm@v4
+
+      - name: Helm chart lint + kubeconform
+        run: make helm-lint
+
+      - name: Lint GitHub Actions workflows
+        run: make lint-workflows
+
+      - name: Dockerfile base image digest check
+        run: |
+          if grep -E '^FROM [^ @]+:[^ @]+( AS .+)?$' Dockerfile; then
+            echo "::error file=Dockerfile,title=Unpinned base image::Dockerfile FROM lines must use digest-pinned references. Run 'make pin-base-images' to update."
+            exit 1
+          fi
+          echo "Dockerfile base images are digest-pinned."
+
       - name: Vulnerability check
         run: make vuln

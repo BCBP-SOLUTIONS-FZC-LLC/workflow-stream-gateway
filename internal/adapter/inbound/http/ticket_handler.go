@@ -21,7 +21,6 @@ const (
 	headerFeatureFlags = "x-feature-flags"
 )
 
-// TicketHandler implements POST /api/v1/stream/tickets (LLD §5.1).
 type TicketHandler struct {
 	tickets *usecase.TicketService
 }
@@ -72,8 +71,6 @@ func recordTicketMint(result string) {
 	}
 }
 
-// splitHeaderList mirrors execution_service's departmentsHeader parsing
-// convention: comma-separated, trimmed, empty entries dropped.
 func splitHeaderList(raw string) []string {
 	if raw == "" {
 		return nil
@@ -88,12 +85,6 @@ func splitHeaderList(raw string) []string {
 	return out
 }
 
-// splitDepartments parses x-departments' "<department_id>:<role>" pairs —
-// mirrors execution_service's own callerDepartments() fix (2026-08-24): a
-// token missing the ":" separator is dropped rather than guessed at, since
-// this service has no schema to validate the ID half against (unlike
-// execution_service, which parses into a real uuid.UUID; this ticket
-// snapshot keeps it as a string, consistent with every other Ticket field).
 func splitDepartments(raw string) []domain.DepartmentRole {
 	if raw == "" {
 		return nil

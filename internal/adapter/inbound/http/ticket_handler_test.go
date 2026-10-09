@@ -16,7 +16,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/domain"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability/obstest"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
@@ -25,7 +25,7 @@ import (
 // just the nil-guard around them — matching how cmd/server calls this
 // exactly once at real process boot.
 func init() {
-	observability.Register()
+	obstest.Setup()
 }
 
 // fixtureStore is a minimal usecase.Store fake for exercising the HTTP
@@ -68,7 +68,7 @@ func newTestRouter(svc *usecase.TicketService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	api := r.Group("/api/v1")
-	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{ServiceName: "workflow-stream-gateway-test"}) {
+	for _, mw := range gincommon.ProtectedMiddlewares(gincommon.Config{ServiceName: "workflow-stream-gateway", BuildVersion: "test", Domain: "workflow", Environment: "test"}) {
 		api.Use(mw)
 	}
 	api.POST("/stream/tickets", NewTicketHandler(svc).Mint)

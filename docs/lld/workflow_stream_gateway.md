@@ -29,6 +29,7 @@
 | 1.6 | 2026-08-31 | The rev 1.5 `sglog` adapter is replaced with `platform-gincommon/pkg/logger.NewLogger` (Zap-backed) called directly, matching `execution_service`/`definition_service`/`iam-user-profile`'s already-established logger convention (Appendix A Decision 18) — verified directly against those three repos and against `platform-gincommon/pkg/logger`'s own package doc comment, not assumed. The returned logger already satisfies `gincommon.Config.Logger`'s port, so no adapter package is needed at all; `internal/adapter/outbound/sglog` is deleted (§10.1, §11 updated). |
 | 1.7 | 2026-09-10 | All 11 consumed wire types are PascalCase (`WorkflowTaskCreated`, etc.), matching `execution_service`'s own outbound event-catalogue migration and the platform-wide IAM naming convention — not dotted-lowercase as previously documented and implemented. §3.1's const block, its routing-config example, and §6's payload-reference table (which previously carried the dotted form and the AsyncAPI message name as two separate columns — now the same string, collapsed to one column) are all updated; `internal/usecase/fanout.go` and its tests are the corresponding code change. |
 | 1.8 | 2026-09-22 | §3.2's handler-behaviour step 2 said "12 known wire types" where §3.1's const block, `internal/usecase/fanout.go` and this document's own rev 1.7 row and §3.2 filter-policy note all carry 11. Corrected to 11. **Appendix B** gains the four items the body already pointed at it for and it did not carry (three infrastructure-provisioning items in one entry, plus producer onboarding): the `wf-workflow-dash-q` filter policy (§3.2), the ingress idle-timeout the heartbeat interval is provisional against (§7, §11, §12), replica/HPA/drain behaviour (§10.3), and `tender.events`/`notification.events` onboarding (§1). |
+| 1.9 | 2026-10-09 | **Platform observability standard and connection-counter hardening** (§4, §11, §12, §13). Metrics are built through `platform-gincommon` and named `workflow_stream_gateway_*`, replacing the `sse_*` names; the chart gains alert rules and the `OTEL_*` settings. `APP_ENV` is validated against `local`, `dev`, `test`, `staging`, `prod`, the internal token is required outside dev and local, and a malformed value fails startup. The ticket and internal routes cap request bodies at 10 MiB. The connection counter is refreshed while a connection is open and released without going negative; before this a connection open longer than the counter lifetime dropped out of the cap and a stray release raised it. `api/asyncapi.yaml` documents the 11 consumed event types. |
 
 ---
 
@@ -173,7 +174,7 @@ Identical contract shape to Execution Service's and Definition Service's own `/i
 
 - **Route.** `POST /internal/events`, under an `/internal` route group. **Not** exposed via the Envoy Gateway — no gateway identity headers ever reach it.
 - **Auth.** `RequireInternalToken` middleware (ported verbatim from `platform-gincommon`'s shared convention, matching `execution_service`'s `internal/adapter/inbound/http/middleware/internalauth.go`): compares the `x-internal-token` header against `WORKFLOW_STREAM_GATEWAY_TOKEN` using `crypto/subtle.ConstantTimeCompare`. Empty configured token disables the check (local/dev only; NetworkPolicy is the fallback control). A mismatch returns `401` with an RFC-9457 body (`type: https://errors.bcbp.io/workflow-stream-gateway/unauthorized`).
-- **Request body.** One `events.Envelope[json.RawMessage]` (`platform-events/pkg/events`, the exact 13-field shape specified in §7 below), forwarded verbatim by `event_consumer`.
+- **Request body.** One `events.Envelope[json.RawMessage]` (`platform-events/v2/pkg/events`, the exact 13-field shape specified in §7 below), forwarded verbatim by `event_consumer`.
 - **Handler behavior.**
   1. Decode the envelope. A malformed body (unparseable JSON, or missing any of `id`/`type`/`source`/`time` — `events.ParseEnvelope`'s own validation) → `400`, non-retryable.
   2. If `type` is not one of the 11 known wire types (§3.1) → log, count, `200` — the same forward-compatibility convention every other `/internal/events` handler in this platform uses (`execution_service.md` §6.1: "unknown event types are accepted and ignored with 200"), so an upstream team adding a new event type never breaks delivery here.
@@ -192,7 +193,7 @@ Identical contract shape to Execution Service's and Definition Service's own `/i
 | `sse:events:<tenant_id>:<user_id>` | Personal Valkey Stream; each entry is one rendered SSE frame (§7), `XADD`ed with `MINID ~` trimming to a 10-minute retention window | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out (§3.2 step 4) | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill, §8) |
 | `sse:events:broadcast:<tenant_id>` | Tenant-wide Valkey Stream (§6) — every one of the 11 known event types, same trim/TTL shape as the personal key | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, unconditionally for every known event | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket whose `tenant_roles` includes `tenant_admin`/`tenant_owner` |
 | `sse:events:broadcast:<tenant_id>:<department_id>` | One department's Valkey Stream (§6) — the 6 task-scoped event types only, same trim/TTL shape | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, for task-scoped events whose payload `department_id` matches | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket holding any role in that department |
-| `sse:conncount:<tenant_id>:<user_id>` | Integer counter of currently-open SSE connections for this user | `EXPIRE` refreshed on increment to a value longer than the ticket TTL | `GET /api/v1/stream` on connect (increment) / disconnect (decrement) | `GET /api/v1/stream` on connect (cap check, §9.3) |
+| `sse:conncount:<tenant_id>:<user_id>` | Integer counter of currently-open SSE connections for this user | `EXPIRE` set on increment to a value longer than the ticket TTL and refreshed on every wake-up of the open connection, so a long-lived connection stays counted; release deletes the key at zero and never leaves it negative | `GET /api/v1/stream` on connect (increment) / disconnect (decrement) | `GET /api/v1/stream` on connect (cap check, §9.3) |
 | `sse:ticketrate:<tenant_id>:<user_id>` | Fixed-window counter, mint attempts in the current rolling minute | 60s, reset each window | `POST /api/v1/stream/tickets` | `POST /api/v1/stream/tickets` (rate check, §9.3) |
 
 No dedup/idempotency key exists in this schema — see §9.2 for why one isn't needed, unlike every DB-backed `/internal/events` handler elsewhere in this platform.
@@ -293,7 +294,7 @@ data: {"id":"018f2c3e-6b1a-7c40-9e2f-...","type":"WorkflowTaskCompleted","source
 
 - `id:` is the Valkey Stream entry ID (`<ms-timestamp>-<seq>`) — the transport-level resume token, distinct from the UUID inside `data:` (the envelope's own `id`).
 - `event:` is the dotted wire type.
-- `data:` is exactly `platform-events`' `Envelope[T]` shape (`platform-events/pkg/events/envelope.go`, verified this session — 13 fields: `id`/`type`/`source`/`specversion`/`tenant_id`/`trace_id`/`correlation_id`/`subject`/`actor`/`ip_address`/`user_agent`/`dataschema`/`time`, plus `data`), empty-string `omitempty` fields included here for wire-shape completeness even when unset by the producer. **Correction from the superseded proposal:** its own worked example omitted `correlation_id`/`actor`/`ip_address`/`user_agent`/`dataschema` — this section's example is the corrected, complete shape.
+- `data:` is exactly `platform-events`' `Envelope[T]` shape (`platform-events/v2/pkg/events/envelope.go`, verified this session — 13 fields: `id`/`type`/`source`/`specversion`/`tenant_id`/`trace_id`/`correlation_id`/`subject`/`actor`/`ip_address`/`user_agent`/`dataschema`/`time`, plus `data`), empty-string `omitempty` fields included here for wire-shape completeness even when unset by the producer. **Correction from the superseded proposal:** its own worked example omitted `correlation_id`/`actor`/`ip_address`/`user_agent`/`dataschema` — this section's example is the corrected, complete shape.
 - Heartbeat: a `: keep-alive` comment frame every 15 seconds (§11) — ignored by `EventSource`'s parser, holds the connection through an intermediary idle timeout (Appendix B: exact ingress idle-timeout unconfirmed against real infra).
 - `retry:` left at the browser default (~3000ms) unless a deploy-time reconnect-storm problem is observed.
 
@@ -391,13 +392,15 @@ Scales on open-connection count, not request QPS — a different signal from eve
 
 **gincommon middleware:** `gincommon.ObservabilityMiddlewares` is applied at the root engine, ahead of every route — including `GET /api/v1/stream` and `POST /internal/events`, neither of which sits under `/api/v1`'s `ProtectedMiddlewares` group and would otherwise get no gincommon instrumentation at all. This gives every route gincommon's own `http_requests_total`/`http_request_duration_seconds`/tracing spans on top of the custom metrics below — one consequence worth noting: the SSE endpoint's request-duration/tracing span only completes at connection close, so it reports as one very-long-duration observation rather than per-request granularity, an inherent mismatch with a long-lived connection, not a bug. `gincommon.TimeoutMiddleware` is scoped to the `/api/v1` and `/internal` groups only — never applied root-wide, since that would also cut off the SSE stream, which must stay open (rev 1.5, Appendix A Decision 17). Registers via `gincommon.MetricsRegisterer()`, not `prometheus.MustRegister` on the default registry directly.
 
-**Custom metrics:**
+**Metrics.** Every collector is built through `platform-gincommon`, which injects the constant labels `domain` (`workflow`), `service` (`workflow-stream-gateway`) and `environment` (`APP_ENV`) and rejects a name or label outside the platform standard. The platform libraries emit the shared `platform_*` series (`platform_http_*`, `platform_build_info`, `platform_library_info`); there are no workflow domain-shared series yet; the service-specific series are:
 
-- `sse_tickets_minted_total{result}` (`result ∈ {ok, rate_limited, valkey_unavailable}`)
-- `sse_connections_open` (Gauge) — current open-connection count, the scaling signal (§10.2)
-- `sse_connections_rejected_total{reason}` (`reason ∈ {cap_exceeded, invalid_ticket, valkey_unavailable}`)
-- `internal_events_ingest_total{event_type, result}` (`result ∈ {ok, bad_payload, error}`) — matching the platform-wide `/internal/events` metric convention (`execution_service.md` §7.5)
-- `sse_frames_written_total{event_type}`
+- `workflow_stream_gateway_tickets_minted_total{result}` (`result ∈ {ok, rate_limited, valkey_unavailable}`)
+- `workflow_stream_gateway_connections_open` (Gauge): the open-connection count, the scaling signal (§10.2)
+- `workflow_stream_gateway_connections_rejected_total{reason}` (`reason ∈ {cap_exceeded, invalid_ticket, valkey_unavailable}`)
+- `workflow_stream_gateway_internal_events_ingest_total{event_type, result}` (`result ∈ {ok, bad_payload, error}`)
+- `workflow_stream_gateway_frames_written_total{event_type}`
+
+`docs/observability/metric-registry.md` lists the series from a real scrape. The chart's `PrometheusRule` alerts on the absence of a healthy replica, a replica count below two, a sustained `5xx` rate, a handler panic, Valkey unavailability on the ticket and stream routes, sustained ingest errors, and clients hitting the per-user cap. Tracing exports over OTLP; `OTEL_EXPORTER_OTLP_ENDPOINT` unset or `none` disables export while trace and request ids keep working.
 
 **Heartbeat:** a `: keep-alive` comment frame every 15 seconds on every open connection (§7).
 
@@ -414,7 +417,10 @@ Scales on open-connection count, not request QPS — a different signal from eve
 | Connection cap | 5 concurrent connections per `(tenant_id, user_id)` | §9.3 — provisional |
 | Ticket-mint rate | 10 mints/minute per `(tenant_id, user_id)` | §9.3 — provisional |
 | Heartbeat interval | 15s | §7, §11 — provisional pending real ingress idle-timeout confirmation (Appendix B) |
-| `WORKFLOW_STREAM_GATEWAY_TOKEN` | required in production | `/internal/events` auth (§3.2) |
+| `APP_ENV` | `dev` | One of `local`, `dev`, `test`, `staging`, `prod`; any other value fails startup |
+| `WORKFLOW_STREAM_GATEWAY_TOKEN` | required outside `dev` and `local` | `/internal/events` auth (§3.2) |
+| `OTEL_SERVICE_NAME` | `workflow-stream-gateway` | The `service` metric label and trace service name |
+| Malformed values | startup fails | A number or duration that does not parse is an error, never a silent default |
 | `VALKEY_ADDR` / `VALKEY_PASSWORD` / `VALKEY_DIAL_TIMEOUT` / `VALKEY_READ_TIMEOUT` / `VALKEY_WRITE_TIMEOUT` | matches `event_consumer`'s own env-var naming | platform-wide Valkey client convention |
 
 ---
@@ -426,6 +432,9 @@ Scales on open-connection count, not request QPS — a different signal from eve
 - **Partial-failure retry semantics (§3.2):** simulate a Valkey write failure on recipient 2 of 3 — assert `502`, and that a subsequent retry's duplicate `XADD` to recipients 1 and 3 is harmless (stream contains the duplicate, not an error).
 - **Reconnect/backfill:** `XRANGE`-based replay within the 10-minute window; `resync-required` frame beyond it.
 - **Isolation:** a ticket minted for `(tenant A, user 1)` can never read `(tenant A, user 2)`'s or `(tenant B, user 1)`'s stream — construct a `GET /api/v1/stream` call attempting to pass a client-supplied `tenant_id`/`user_id` and assert it's ignored entirely (identity comes only from the ticket).
+- **Connection counter:** the cap holds under concurrent connects, a release never leaves the counter below zero, and an open connection refreshes the counter so it outlives its initial lifetime; verified against a real Valkey.
+- **Request size:** a body over 10 MiB on the ticket and internal ingest routes is rejected with `413`.
+- **Contracts:** the OpenAPI lists exactly the routes the router serves, and the AsyncAPI documents exactly the 11 event types the service routes.
 - **Fail-closed:** both ticket endpoints under a simulated Valkey outage return `503`, never a silent allow.
 - **Load test:** connection-count ramp (not QPS) to whatever cap Appendix B's provisional numbers settle on, once real usage data exists.
 

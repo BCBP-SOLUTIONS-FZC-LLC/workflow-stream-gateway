@@ -8,6 +8,7 @@ workdir: .
 exclude:
   - ".claude"
   - "vendor"
+  - "test"
 
 allow:
   depOnAnyVendor: true
@@ -27,6 +28,9 @@ components:
     in: "cmd/**"
 
 deps:
+  observability:
+    mayDependOn:
+      - observability
   usecase:
     mayDependOn:
       - domain

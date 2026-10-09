@@ -13,8 +13,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
-// TicketStore implements usecase.Store against real Valkey — the ticket
-// key schema and rate-limit counter from LLD §4.
 type TicketStore struct {
 	client redis.Cmdable
 }
@@ -23,11 +21,6 @@ func NewTicketStore(client redis.Cmdable) *TicketStore {
 	return &TicketStore{client: client}
 }
 
-// AllowMint is a fixed-window counter (LLD §4's sse:ticketrate key,
-// §9.3's cap): the first increment in a window sets the window's
-// expiry, and every increment after that reuses it — never resetting the
-// TTL on subsequent calls (a sliding reset would let a caller who mints
-// steadily never actually hit the window boundary).
 func (s *TicketStore) AllowMint(ctx context.Context, tenantID, userID string, max int, window time.Duration) (bool, error) {
 	key := fmt.Sprintf("sse:ticketrate:%s:%s", tenantID, userID)
 	count, err := s.client.Incr(ctx, key).Result()
@@ -54,8 +47,6 @@ func (s *TicketStore) PutTicket(ctx context.Context, token string, ticket domain
 	return nil
 }
 
-// GetTicket never deletes the key it reads — a ticket is reusable within
-// its TTL (usecase.TicketService's own doc comment), not single-use.
 func (s *TicketStore) GetTicket(ctx context.Context, token string) (domain.Ticket, error) {
 	key := fmt.Sprintf("ssegw:ticket:%s", token)
 	data, err := s.client.Get(ctx, key).Bytes()

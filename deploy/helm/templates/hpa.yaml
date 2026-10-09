@@ -1,7 +1,5 @@
 {{- if .Values.autoscaling.enabled }}
-# CPU/memory-based scaling only — a placeholder until a connection-count
-# custom metric is wired up (see values.yaml's autoscaling comment; LLD
-# §10.2 explicitly leaves the real scaling signal/target undecided).
+# CPU and memory scaling until a connection-count custom metric is wired up (see values.yaml).
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

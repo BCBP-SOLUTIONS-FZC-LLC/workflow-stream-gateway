@@ -10,6 +10,8 @@ GOVULNCHECK_VERSION := v1.1.4
 GOARCHLINT_VERSION   := v1.15.0
 HADOLINT_VERSION    := v2.12.0
 TRIVY_VERSION       := 0.71.2
+KUBECONFORM_VERSION := 0.8.0
+ACTIONLINT_VERSION  := v1.7.12
 
 TOOLS_DIR    := .tools
 BIN_DIR      := bin
@@ -21,6 +23,9 @@ GOVULNCHECK := $(TOOLS_DIR)/govulncheck
 GOARCHLINT  := $(TOOLS_DIR)/go-arch-lint
 HADOLINT    := $(TOOLS_DIR)/hadolint
 TRIVY       := $(TOOLS_DIR)/trivy
+KUBECONFORM := $(TOOLS_DIR)/kubeconform
+ACTIONLINT  := $(TOOLS_DIR)/actionlint
+HELM        ?= helm
 
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS       := -X main.version=$(BUILD_VERSION)
@@ -29,16 +34,11 @@ COVER_PROFILE   := $(COVERAGE_DIR)/coverage.out
 COVER_HTML      := $(COVERAGE_DIR)/coverage.html
 COVER_THRESHOLD := 90
 
-# internal/adapter/outbound/valkey is a thin wrapper over redis.Cmdable
-# (dial, GET/SET/INCR/EXPIRE) — genuinely hard to exercise at the global
-# floor without a real or faked Redis, and this platform's other services
-# don't unit-test their equivalent thin Valkey wrappers either (verified:
-# execution_service/definition_service carry no cache_test.go). Real
-# coverage of this package comes from the docker-compose smoke test
-# (README's "Local development"), not mocks of redis.Cmdable.
-COVER_PKG_FLOORS := internal/adapter/outbound/valkey:0
+# internal/observability keeps the error-wrapping branches of the telemetry
+# initialisation, which fail only when a platform library refuses its own identity.
+COVER_PKG_FLOORS := internal/observability:85
 
-.PHONY: all tools setup install-hooks build dev test test-ci \
+.PHONY: test-integration merge-coverage helm-lint lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
         cover cover-func cover-html cover-check cover-check-pkg \
         tidy fmt-check fix check lint lint-fix arch-lint vuln \
         docker-build docker-lint docker-trivy docker-check \
@@ -85,6 +85,13 @@ tools:
 	curl -sLo /tmp/trivy.tar.gz \
 	  "https://github.com/aquasecurity/trivy/releases/download/v$(TRIVY_VERSION)/trivy_$(TRIVY_VERSION)_$$TRIVY_OS_ARCH.tar.gz" && \
 	tar -xzf /tmp/trivy.tar.gz -C $(TOOLS_DIR) trivy && rm /tmp/trivy.tar.gz
+	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+	@OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); ARCH=$$(uname -m); \
+	if [ "$$ARCH" = "aarch64" ]; then ARCH="arm64"; fi; \
+	if [ "$$ARCH" = "x86_64" ]; then ARCH="amd64"; fi; \
+	curl -sLo /tmp/kubeconform.tar.gz \
+	  "https://github.com/yannh/kubeconform/releases/download/v$(KUBECONFORM_VERSION)/kubeconform-$$OS-$$ARCH.tar.gz" && \
+	tar -xzf /tmp/kubeconform.tar.gz -C $(TOOLS_DIR) kubeconform && rm /tmp/kubeconform.tar.gz
 	@echo "✓ tools installed to $(TOOLS_DIR)/"
 
 ## build: Compile the server binary to bin/
@@ -106,9 +113,23 @@ test:
 	    ./internal/...
 	@go tool cover -func=$(COVERAGE_DIR)/unit.out | awk '/^total:/{print "total:", $$NF}'
 
-## test-ci: Run the unit suite (alias kept for CI-workflow parity with sibling repos)
-test-ci: test
-	@cp $(COVERAGE_DIR)/unit.out $(COVER_PROFILE)
+## test-integration: Run integration tests; containers start through testcontainers-go
+test-integration:
+	@mkdir -p $(COVERAGE_DIR)
+	TESTCONTAINERS_RYUK_DISABLED=true \
+	go test -race -count=1 -tags integration \
+	    -coverpkg=./internal/... \
+	    -coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
+	    ./test/integration/...
+
+## merge-coverage: Merge the unit and integration profiles into coverage.out
+merge-coverage:
+	@python3 scripts/merge_coverage.py $(COVERAGE_DIR)/unit.out $(COVERAGE_DIR)/integration.out | grep -v "/obstest/" > $(COVER_PROFILE)
+	@echo "✓ $(COVER_PROFILE) merged from unit + integration suites"
+
+## test-ci: Run unit and integration suites with merged coverage
+test-ci: test test-integration merge-coverage
+	@go tool cover -func=$(COVER_PROFILE) | awk '/^total:/{print "total:", $$NF}'
 
 ## cover: Print total coverage from the last test-ci run
 cover:
@@ -185,6 +206,8 @@ check:
 	$(GOLANGCI) run ./...
 	$(GOARCHLINT) check --project-path .
 	go vet ./cmd/... ./internal/...
+	@$(MAKE) metrics-lint
+	@$(MAKE) helm-lint
 	@$(MAKE) cover-check
 	@echo "✓ all checks passed"
 
@@ -199,6 +222,41 @@ lint-fix:
 ## arch-lint: Enforce the domain/usecase/adapter/cmd import-direction rules
 arch-lint:
 	$(GOARCHLINT) check --project-path .
+
+## metrics-lint: Observability standard: collector naming, metricslint on a real scrape, alert and doc references, inventory drift
+metrics-lint:
+	@bash .github/scripts/check-metric-naming.sh
+	@bash .github/scripts/metricslint.sh
+
+## metrics-inventory: Regenerate docs/observability/metric-registry.md from the registry and a real scrape
+metrics-inventory:
+	@METRICS_INVENTORY_WRITE=1 bash .github/scripts/metricslint.sh
+
+## lint-workflows: Lint GitHub Actions workflow YAML
+lint-workflows:
+	$(ACTIONLINT)
+
+HELM_LINT_VALUES := --set env.VALKEY_ADDR=valkey:6379 \
+	  --set-string secretValues.VALKEY_PASSWORD=placeholder \
+	  --set-string secretValues.WORKFLOW_STREAM_GATEWAY_TOKEN=placeholder \
+	  --set prometheusRule.enabled=true
+
+## helm-lint: Lint the Helm chart and validate its rendered manifests against the Kubernetes API schema
+helm-lint:
+	$(HELM) lint deploy/helm $(HELM_LINT_VALUES)
+	@mkdir -p $(TOOLS_DIR)
+	$(HELM) template deploy/helm $(HELM_LINT_VALUES) > $(TOOLS_DIR)/helm-rendered.yaml
+	$(KUBECONFORM) -strict -skip PrometheusRule,ServiceMonitor,HTTPRoute,SecurityPolicy $(TOOLS_DIR)/helm-rendered.yaml
+	@echo "✓ helm chart valid"
+
+## pin-base-images: Resolve current digests for the Dockerfile base images and pin them
+pin-base-images:
+	@GOLANG_DIGEST=$$(docker buildx imagetools inspect golang:1.26-alpine | awk '/^Digest:/{print $$2; exit}'); \
+	DISTROLESS_DIGEST=$$(docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot | awk '/^Digest:/{print $$2; exit}'); \
+	sed -E -i.bak "s|^(FROM golang:1\.26-alpine)(@sha256:[0-9a-f]+)?( AS [A-Za-z0-9_-]+)?|\\1@$$GOLANG_DIGEST\\3|" Dockerfile; \
+	sed -E -i.bak "s|^(FROM gcr\.io/distroless/static-debian12:nonroot)(@sha256:[0-9a-f]+)?( AS [A-Za-z0-9_-]+)?|\\1@$$DISTROLESS_DIGEST\\3|" Dockerfile; \
+	rm -f Dockerfile.bak; \
+	echo "Pinned base images"
 
 ## vuln: Run govulncheck against dependencies
 vuln:

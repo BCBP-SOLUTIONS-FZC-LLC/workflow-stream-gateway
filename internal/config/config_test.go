@@ -45,13 +45,58 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	assert.Equal(t, 3, cfg.ConnectionCapPerUser)
 }
 
-func TestLoad_InvalidIntFallsBackToDefault(t *testing.T) {
-	t.Setenv("HTTP_PORT", "not-a-number")
+func TestLoad_MalformedValuesFailFast(t *testing.T) {
+	for name, env := range map[string][2]string{
+		"int":      {"HTTP_PORT", "not-a-number"},
+		"duration": {"TICKET_TTL", "soon"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(env[0], env[1])
+			_, err := Load()
+			assert.ErrorContains(t, err, env[0])
+		})
+	}
+}
 
+func TestLoad_RejectsUnknownAppEnv(t *testing.T) {
+	for _, env := range []string{"production", "development", "qa"} {
+		t.Setenv("APP_ENV", env)
+		_, err := Load()
+		assert.ErrorContains(t, err, "APP_ENV", env)
+	}
+}
+
+func TestLoad_AcceptsEveryPlatformAppEnv(t *testing.T) {
+	for _, env := range []string{"local", "dev", "test", "staging", "prod"} {
+		t.Setenv("APP_ENV", env)
+		t.Setenv("WORKFLOW_STREAM_GATEWAY_TOKEN", "secret")
+		_, err := Load()
+		assert.NoError(t, err, env)
+	}
+}
+
+func TestLoad_StagingRequiresInternalToken(t *testing.T) {
+	t.Setenv("APP_ENV", "staging")
+	t.Setenv("WORKFLOW_STREAM_GATEWAY_TOKEN", "")
+
+	_, err := Load()
+	assert.ErrorContains(t, err, "WORKFLOW_STREAM_GATEWAY_TOKEN")
+}
+
+func TestLoad_LocalAndDevMayOmitTheToken(t *testing.T) {
+	t.Setenv("WORKFLOW_STREAM_GATEWAY_TOKEN", "")
+	for _, env := range []string{"local", "dev"} {
+		t.Setenv("APP_ENV", env)
+		_, err := Load()
+		assert.NoError(t, err, env)
+	}
+}
+
+func TestLoad_DefaultServiceName(t *testing.T) {
+	t.Setenv("OTEL_SERVICE_NAME", "")
 	cfg, err := Load()
 	require.NoError(t, err)
-
-	assert.Equal(t, 8080, cfg.HTTPPort)
+	assert.Equal(t, "workflow-stream-gateway", cfg.OTELServiceName)
 }
 
 func TestLoad_ProdRequiresInternalToken(t *testing.T) {

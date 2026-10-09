@@ -19,12 +19,12 @@ service:
   metricsPort: 9090
 
 # autoscaling — deliberately NOT enabled by default. This service scales on
-# open SSE connection count (sse_connections_open), not CPU/RPS (LLD §10.2)
+# open SSE connection count (workflow_stream_gateway_connections_open), not CPU/RPS (LLD §10.2)
 # — a CPU-based HPA would scale on the wrong signal entirely for a mostly-
 # idle-CPU, many-long-lived-connections workload. A connection-count-based
 # HPA needs a custom-metrics adapter (prometheus-adapter, mirroring
 # definition_service's own optional targetRPSPerReplica pattern) exposing
-# sse_connections_open — replica count, the exact target value, and
+# workflow_stream_gateway_connections_open — replica count, the exact target value, and
 # graceful-drain behavior on scale-down are all explicitly undecided
 # (LLD §10.2, Appendix B), not something to invent here. Fixed replicaCount
 # above is the deploy shape until that's resolved.
@@ -33,7 +33,7 @@ autoscaling:
   minReplicas: 2
   maxReplicas: 8
   # targetConnectionsPerReplica: 2000   # sketch only — needs prometheus-adapter
-                                        # wired to sse_connections_open first
+                                        # wired to workflow_stream_gateway_connections_open first
 
 resources:
   # No LLD-specified request/limit numbers exist for this service — a
@@ -48,9 +48,13 @@ resources:
     memory: "256Mi"
 
 env:
-  APP_ENV: "prod" # enables WORKFLOW_STREAM_GATEWAY_TOKEN validation (internal/config/config.go validate())
+  APP_ENV: "prod" # one of local, dev, test, staging, prod; outside dev and local the internal token is required
   HTTP_PORT: "8080"
   METRICS_PORT: "9090"
+  OTEL_SERVICE_NAME: "workflow-stream-gateway"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "" # for example otel-collector.observability:4317; empty disables trace export
+  OTEL_EXPORTER_OTLP_INSECURE: "false"
+  OTEL_TRACES_SAMPLER_RATIO: "1.0"
   VALKEY_ADDR: "" # cluster-internal Valkey address
   VALKEY_DIAL_TIMEOUT: "2s"
   VALKEY_READ_TIMEOUT: "1s"
@@ -65,7 +69,7 @@ env:
 
 envFromSecret:
   - VALKEY_PASSWORD
-  - WORKFLOW_STREAM_GATEWAY_TOKEN # required when APP_ENV=prod — pod crash-loops without it (config.validate())
+  - WORKFLOW_STREAM_GATEWAY_TOKEN # required outside dev and local; the pod fails to start without it
 
 # existingSecret — preferred for production. See secret.yaml for the two
 # supported modes (existingSecret vs. secretValues).
@@ -144,6 +148,10 @@ networkPolicy:
       app.kubernetes.io/name: prometheus
   additionalIngressRules: []
   additionalEgressRules: []
+
+prometheusRule:
+  enabled: false
+  additionalLabels: {}
 
 serviceMonitor:
   enabled: true

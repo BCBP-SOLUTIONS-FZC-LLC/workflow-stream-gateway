@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
-var testGinConfig = gincommon.Config{ServiceName: "workflow-stream-gateway-test"}
+var testGinConfig = gincommon.Config{ServiceName: "workflow-stream-gateway", BuildVersion: "test", Domain: "workflow", Environment: "test"}
 
 // unreachableValkeyClient points at a port nothing listens on, so Ping
 // fails fast (connection refused) without needing a real Valkey instance.
@@ -109,4 +110,15 @@ func TestNewRouter_Stream_RegisteredOutsideAuthGroups(t *testing.T) {
 	// protected group is the point; StreamHandler_test.go already covers
 	// the handler's own ticket-validation behavior in isolation.
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestNewRouter_InternalEvents_OversizedBodyIsRejectedWith413(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(testRouterConfig())
+
+	body := strings.NewReader(strings.Repeat("x", 11<<20))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", body))
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 }

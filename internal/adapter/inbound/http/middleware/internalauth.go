@@ -1,5 +1,3 @@
-// Package middleware holds gin middlewares that don't belong to a single
-// handler — currently just the internal-route-group token check.
 package middleware
 
 import (
@@ -11,10 +9,6 @@ import (
 
 const InternalTokenHeader = "x-internal-token"
 
-// problemDetails is a minimal, local RFC-9457 body — kept independent of
-// the handler package's own (unexported) writeProblem rather than
-// importing it, so this middleware has no dependency on a specific
-// adapter package (mirrors execution_service's identical middleware).
 type problemDetails struct {
 	Type     string `json:"type"`
 	Title    string `json:"title"`
@@ -24,12 +18,6 @@ type problemDetails struct {
 	Code     string `json:"code"`
 }
 
-// RequireInternalToken guards the /internal route group (LLD §3.2). When
-// token is empty the check is disabled (local/dev) and requests pass
-// through; NetworkPolicy remains the primary control. When token is set,
-// a request missing or mismatching the x-internal-token header is
-// rejected with 401 and an RFC-9457 problem-details body. The comparison
-// is constant-time to avoid a timing side-channel on the shared secret.
 func RequireInternalToken(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if token == "" {
@@ -49,6 +37,15 @@ func RequireInternalToken(token string) gin.HandlerFunc {
 			})
 			return
 		}
+		c.Next()
+	}
+}
+
+const maxBodyBytes = 10 << 20
+
+func LimitRequestBody() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
 		c.Next()
 	}
 }

@@ -7,28 +7,6 @@ import (
 	"fmt"
 )
 
-// The 11 wire types this service consumes (LLD §3.1). Payload schemas are
-// owned by execution_service's own api/asyncapi.yaml — verified there
-// (2026-08-21) that every task-scoped payload carries "assignee_user_ids"
-// ([]string) and "department_id" (string), WorkflowTaskReassigned
-// additionally carries "old_user_id"/"new_user_id" (both string), and
-// every instance-scoped payload carries "started_by_user_id" (string) and
-// — as of that verification — no active-assignees field at all, despite
-// this LLD's §6 routing table hedging "+ active assignees, where
-// present": today, "where present" is never, for all 5 instance events
-// currently registered. Instance-scoped payloads also carry no
-// department_id at all — department scoping is a task-level-only concept
-// in execution_service's domain model (verified 2026-08-24: workflow_instance
-// has no department_id column; a single instance's tasks can legitimately
-// span multiple departments over its lifecycle).
-//
-// WorkflowInstanceStarted is deliberately NOT in this list (decided
-// 2026-08-24, resolving the routing-table contradiction the LLD itself
-// had flagged): execution_service's own asyncapi.yaml documents it as
-// "not routed to the Dashboard Stream Gateway — the creating client
-// already knows synchronously." An unknown type is still accepted and
-// ignored with 200 (IsKnownEventType below), so a producer that hasn't
-// caught up to this decision never breaks delivery here.
 const (
 	eventTaskCreated        = "WorkflowTaskCreated"
 	eventTaskCompleted      = "WorkflowTaskCompleted"
@@ -59,26 +37,21 @@ var instanceEvents = map[string]bool{
 	eventInstanceFinished:   true,
 }
 
-// isTaskScoped reports whether eventType is one of the 6 task-scoped
-// types (the only ones carrying a department_id, LLD §6's department
-// broadcast tier).
+func KnownEventTypes() []string {
+	return []string{
+		eventTaskCreated, eventTaskCompleted, eventTaskDeferred, eventTaskReassigned, eventTaskSLAWarning, eventTaskSLABreached,
+		eventInstancePaused, eventInstanceResumed, eventInstanceCancelled, eventInstanceTerminated, eventInstanceFinished,
+	}
+}
+
 func isTaskScoped(eventType string) bool {
 	return taskAssigneeEvents[eventType] || eventType == eventTaskReassigned
 }
 
-// ErrUnknownEventType is returned for a wire type absent from the 11
-// known types — the handler treats this as forward-compatible, not an
-// error (LLD §3.2 step 2: log, count, 200).
 var ErrUnknownEventType = errors.New("unknown event type")
 
-// ErrInvalidPayload means a known event type's payload didn't match its
-// expected shape — a producer-side bug, not a delivery problem, so the
-// handler maps this to 400 (non-retryable) rather than 502.
 var ErrInvalidPayload = errors.New("event payload does not match expected schema for its type")
 
-// IsKnownEventType reports whether eventType is one of the 11 types this
-// service routes (LLD §3.1). The handler checks this before calling
-// Ingest so an unknown type never even reaches recipient resolution.
 func IsKnownEventType(eventType string) bool {
 	return taskAssigneeEvents[eventType] || instanceEvents[eventType] || eventType == eventTaskReassigned
 }
@@ -98,21 +71,11 @@ type instanceStartedByPayload struct {
 	StartedByUserID string `json:"started_by_user_id"`
 }
 
-// target is what a known event resolves to: who gets it personally, and
-// (for task-scoped events only) which department's broadcast tier it
-// also belongs to.
 type target struct {
 	recipients   []string
 	departmentID string
 }
 
-// resolveTarget extracts the recipient user IDs and (for task-scoped
-// events) the department_id for a known event type from its raw JSON
-// payload (LLD §6). Recipients are returned even if some are empty
-// strings — callers skip those rather than treating them as an error,
-// since an upstream data-quality issue in a producer's payload isn't
-// this service's validation responsibility to police (LLD §1: "no
-// aggregation, no enrichment").
 func resolveTarget(eventType string, payload []byte) (target, error) {
 	switch {
 	case eventType == eventTaskReassigned:
@@ -132,28 +95,18 @@ func resolveTarget(eventType string, payload []byte) (target, error) {
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return target{}, fmt.Errorf("%w: %v", ErrInvalidPayload, err)
 		}
-		// No departmentID: instance-scoped payloads carry no department
-		// field at all (see the const block's doc comment above).
 		return target{recipients: []string{p.StartedByUserID}}, nil
 	default:
 		return target{}, ErrUnknownEventType
 	}
 }
 
-// EventStreamStore is the persistence FanoutService needs — one XADD per
-// recipient (LLD §3.2 step 4, §4's sse:events:<tenant_id>:<user_id> key),
-// plus the tenant-wide and per-department broadcast tiers (§6).
 type EventStreamStore interface {
 	AppendEvent(ctx context.Context, tenantID, userID, eventType string, rawEnvelope []byte) error
 	AppendBroadcastEvent(ctx context.Context, tenantID, eventType string, rawEnvelope []byte) error
 	AppendDepartmentEvent(ctx context.Context, tenantID, departmentID, eventType string, rawEnvelope []byte) error
 }
 
-// IngestInput is what the HTTP handler hands to FanoutService.Ingest.
-// Payload is just the envelope's "data" sub-object (used to resolve
-// recipients); RawEnvelope is the full original request body, stored
-// verbatim as the SSE frame's data field (LLD §7 — no aggregation, no
-// re-encoding that could reorder or drop fields).
 type IngestInput struct {
 	EventType   string
 	TenantID    string
@@ -169,13 +122,6 @@ func NewFanoutService(store EventStreamStore) *FanoutService {
 	return &FanoutService{store: store}
 }
 
-// Ingest resolves recipients and writes one stream entry per recipient,
-// then the tenant-wide broadcast entry, then — for task-scoped events
-// only — the department broadcast entry (LLD §6's two-tier model). A
-// single append failure aborts immediately (LLD §3.2 step 5) — the
-// caller (HTTP handler) maps that to 502, and a retry that re-delivers to
-// writes that already succeeded is harmless (LLD §8: duplicate delivery
-// is a no-op for an idempotent frontend reducer).
 func (s *FanoutService) Ingest(ctx context.Context, in IngestInput) error {
 	t, err := resolveTarget(in.EventType, in.Payload)
 	if err != nil {

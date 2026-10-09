@@ -12,9 +12,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
-// StreamStore implements usecase.StreamStore — the read side of the
-// personal, tenant-wide, and per-department Valkey Streams EventStore
-// writes to.
 type StreamStore struct {
 	client redis.Cmdable
 }
@@ -23,9 +20,6 @@ func NewStreamStore(client redis.Cmdable) *StreamStore {
 	return &StreamStore{client: client}
 }
 
-// KeyFor exposes this adapter's private key-naming scheme to the usecase
-// layer, which needs a stable per-target key for the compound resume
-// cursor (LLD §8) without owning that naming scheme itself.
 func (s *StreamStore) KeyFor(target usecase.StreamTarget) string {
 	return keyFor(target)
 }
@@ -50,14 +44,6 @@ func (s *StreamStore) RangeSince(ctx context.Context, target usecase.StreamTarge
 	return toFramesFrom(key, entries), nil
 }
 
-// ReadNew issues one multi-key XREAD BLOCK across every given target's
-// stream (LLD §6) — cheaper than one round trip per target, and the only
-// way to block on N streams at once rather than N separate blocking
-// calls. Results come back grouped per-key; this flattens them in the
-// order targets were given (personal first, then tenant-wide-or-
-// departments) — cross-stream chronological interleaving is not
-// guaranteed, consistent with this service's existing no-aggregation
-// stance (LLD §7).
 func (s *StreamStore) ReadNew(ctx context.Context, targets []usecase.StreamTarget, block time.Duration) ([]domain.Frame, error) {
 	streams := make([]string, len(targets)*2)
 	for i, t := range targets {
@@ -84,8 +70,6 @@ func (s *StreamStore) ReadNew(ctx context.Context, targets []usecase.StreamTarge
 	return frames, nil
 }
 
-// keyFor derives the Valkey key for one stream target — the only place
-// this key-naming scheme is known outside EventStore's own writes.
 func keyFor(t usecase.StreamTarget) string {
 	switch {
 	case t.UserID != "":
@@ -97,9 +81,6 @@ func keyFor(t usecase.StreamTarget) string {
 	}
 }
 
-// toFramesFrom tags every entry with the Valkey key it was read from —
-// StreamService needs this to update the right slot of a connection's
-// compound resume cursor (LLD §8) when it's tailing more than one stream.
 func toFramesFrom(sourceKey string, entries []redis.XMessage) []domain.Frame {
 	frames := make([]domain.Frame, 0, len(entries))
 	for _, e := range entries {

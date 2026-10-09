@@ -1,8 +1,3 @@
-// Command server is the workflow-stream-gateway's only binary — an
-// ordinary HTTP server with no background consumer goroutine and no
-// Temporal dependency (LLD §2.2): every inbound path is a plain HTTP
-// handler, since event ingestion arrives via event_consumer's own
-// POST /api/v1/internal/events convention rather than a dedicated SQS consumer.
 package main
 
 import (
@@ -14,8 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/valkey"
@@ -25,11 +19,8 @@ import (
 
 const shutdownTimeout = 10 * time.Second
 
-// version is set via -ldflags at build time (Makefile/Dockerfile).
 var version = "dev"
 
-// Logger is the interface for the logger used by the application.
-// It is named locally since this service has no internal/core/port package of its own
 type Logger interface {
 	Debug(msg string, fields map[string]interface{})
 	Info(msg string, fields map[string]interface{})
@@ -75,25 +66,29 @@ func run(cfg *config.Config, log Logger) error {
 		}
 	}()
 
+	ginCfg := observability.GinConfig(cfg.OTELServiceName, cfg.BuildVersion, cfg.AppEnv, log)
+	shutdownTelemetry, err := observability.InitTelemetry(ginCfg, log)
+	if err != nil {
+		return err
+	}
+	defer shutdownTelemetry()
+
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: newRouter(cfg, client, log),
+		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler:           newRouter(cfg, ginCfg, client),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
-	// Register() must run after newRouter (which calls
-	// gincommon.ObservabilityMiddlewares, wiring in this process's real
-	// gincommon.MetricsRegisterer()) — registering this package's own
-	// collectors any earlier would fall back to gincommon's default
-	// pre-init registerer instead of the one gincommon.MetricsRegisterer's
-	// own doc comment promises callers.
-	observability.Register()
-
 	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", promhttp.Handler())
-	// grants no API access, so NetworkPolicy can scope its own ingress
+	metricsMux.Handle("/metrics", gincommon.MetricsHandler())
 	metricsSrv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.MetricsPort),
-		Handler: metricsMux,
+		Addr:              fmt.Sprintf(":%d", cfg.MetricsPort),
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	errCh := make(chan error, 2)

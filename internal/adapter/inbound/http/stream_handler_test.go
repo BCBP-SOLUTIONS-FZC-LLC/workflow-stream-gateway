@@ -316,3 +316,7 @@ func TestStreamHandler_Stream_LastEventIDHeaderTakesPrecedenceOverQueryParam(t *
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), "event: resync-required")
 }
+
+func (l *alwaysAllowLimiter) Refresh(context.Context, string, string, time.Duration) error {
+	return nil
+}

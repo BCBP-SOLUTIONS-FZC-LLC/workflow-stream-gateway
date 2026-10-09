@@ -12,12 +12,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
-// StreamHandler implements GET /api/v1/stream (LLD §5.2). This route is
-// deliberately not registered under /api/v1's ProtectedMiddlewares group
-// (wired in cmd/server/router.go) — it's carved out of the standard
-// gateway JWT chain entirely, since EventSource can't set an Authorization
-// header; the ticket (validated here via StreamService) is the sole
-// source of connection identity.
 type StreamHandler struct {
 	stream *usecase.StreamService
 }
@@ -63,9 +57,6 @@ func (h *StreamHandler) Stream(c *gin.Context) {
 		if observability.ConnectionsOpen != nil {
 			observability.ConnectionsOpen.Dec()
 		}
-		// Best-effort: a release that fails to reach Valkey leaks one
-		// count until the key's own TTL clears it (LLD §4) — not worth
-		// failing the request over on the way out.
 		_ = h.stream.ReleaseConnection(context.Background(), ticket.TenantID, ticket.UserID)
 	}()
 
@@ -89,8 +80,6 @@ func recordConnectionRejected(reason string) {
 	}
 }
 
-// ginFrameSink adapts usecase.FrameSink onto gin's ResponseWriter (which
-// already satisfies http.Flusher).
 type ginFrameSink struct {
 	w gin.ResponseWriter
 }

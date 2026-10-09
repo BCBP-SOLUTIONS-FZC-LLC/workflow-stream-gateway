@@ -1,46 +1,38 @@
-# Contributing
+# Contributing to workflow-stream-gateway
 
 ## Prerequisites
 
-- Go (see `go.mod` for the version)
-- Docker (for `docker compose up` and the integration image build)
+| Tool | Install |
+| --- | --- |
+| Go 1.26+ | [go.dev/dl](https://go.dev/dl) |
+| Docker, for integration tests and `docker compose` | [docs.docker.com](https://docs.docker.com/get-docker/) |
+| Private module access | `go env -w GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*` and SSH access to the organisation |
 
-## Development setup
+## Workflow
 
-```
-go mod download
-make dev
-```
-
-## Project layout
-
-```
-cmd/server/                                # main() — HTTP server only, no consumer goroutine
-internal/
-├── domain/                                # ticket, connection, event-frame types
-├── usecase/                                # ticket mint/validate, stream handling, fan-out
-├── adapter/
-│   ├── inbound/http/                       # ticket mint + SSE stream + /internal/events handlers
-│   └── outbound/valkey/                    # ticket store, streams, counters
-└── config/
-deploy/helm/                                # Helm chart
+```bash
+make tools && make setup
+make check          # what CI gates on, locally
 ```
 
-Layering is enforced by `.go-arch-lint.yml` (`make arch-lint`): `adapter`/`cmd` may depend on `usecase`/`domain`; `usecase` may only depend on `domain`.
+The pre-commit hook runs tidy, format, lint and arch-lint.
 
-## Extending the service
+## Conventions
 
-### Adding a new consumed event type
+- Dependency direction is `domain ← usecase ← adapter`; `make arch-lint` enforces it.
+- Non-test code carries no comments except `//go:` and `//nolint` directives.
+- Logs, metrics and traces go through `platform-gincommon`, and events through `platform-events`. New metrics are `workflow_stream_gateway_*` collectors built in `internal/observability`, and `make metrics-lint` must pass.
+- A fix starts with a test of the correct behaviour that fails, then the change.
+- Never add a `replace` directive to `go.mod`.
 
-1. Add the wire type to the routing table this repo expects from `event_consumer`'s `config/topology.yaml` (see `docs/lld/workflow_stream_gateway.md` §3.1 for the authoritative list).
-2. Add the recipient-resolution rule to the fan-out usecase (LLD §6) if it doesn't already fit an existing event class.
-3. No new Valkey key shape is needed unless the event introduces a new routing dimension (e.g. tenant-wide broadcast, LLD Appendix B).
+## Adding a consumed event type
 
-### Testing conventions
+Add the type to the routing in the fan-out use case, its message to `api/asyncapi.yaml`, and its route in the consumer's topology; the parity test fails until the first two agree. A new recipient dimension needs its own Valkey key shape in the LLD.
 
-- Unit tests live alongside the code they test (`_test.go`).
-- Ticket lifecycle, fan-out correctness, reconnect/backfill, and isolation each have a dedicated test focus — see LLD §13 for the exact scenarios expected.
+## Specifications and documents
 
-## PR process
+A change to a route updates `docs/swagger/openapi.yaml`. A change to behaviour updates the LLD, the README, `ARCHITECTURE.md` and the CHANGELOG in the same pull request; the in-repo LLD and the OpenAPI stay content-identical to the design repository copies.
 
-Open a PR against `main`. `validate-quality` and `validate-test` (CI) must pass. Keep `go.mod`/`go.sum` tidy — CI fails on drift.
+## Pull requests
+
+Open pull requests as drafts while iterating, fill every section of the template, and add a CHANGELOG entry under `[Unreleased]` for any change to code or contracts. Tags are cut after merge, never inside a pull request.
