@@ -4,8 +4,8 @@ github.com/AdaLogics/go-fuzz-headers v0.0.0-20240806141605-e8a1dd7889d6 h1:He8af
 github.com/AdaLogics/go-fuzz-headers v0.0.0-20240806141605-e8a1dd7889d6/go.mod h1:8o94RPi1/7XTJvwPpRSzSUedZrtlirdB3r9Z20bi2f8=
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c h1:udKWzYgxTojEKWjV8V+WSxDXJ4NFATAsZjh8iIbsQIg=
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
-github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.1.0 h1:huBNqORFe6asW7HflkA7AApuZuPY/DABYmHxO8RIoVk=
-github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.1.0/go.mod h1:Wb1VB+D6NH9y+Wllv2NBzGFswbQNuaOVrgy1tbn2GGQ=
+github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.2.1 h1:rm9YNKkOuM5tNUz7xtQgCHePewuaV4EvFxO6rgtSnW0=
+github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.2.1/go.mod h1:mXTSMp07tXlrhnKnHhj9wwdzLY7ft0xVFNgtEbnWdaE=
 github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.6.0 h1:Ndc1BpY/BOQxq7T4DlRZ3JRaQhlgYpzqIBG8eBst9rs=
 github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.6.0/go.mod h1:ayGo5mxluZ+JrXj7ZhZ7FHeWsklL4eEk4onO8LCYVpQ=
 github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.0 h1:3hYEwfzcLsnl6xNSBhLKE7U+VFqV7OvSJb47y4XBKIs=
