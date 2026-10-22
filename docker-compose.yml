@@ -1,0 +1,31 @@
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: workflow-stream-gateway-valkey
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      secrets:
+        - go_private_token
+    container_name: workflow-stream-gateway-app
+    environment:
+      APP_ENV: dev
+      VALKEY_ADDR: valkey:6379
+      WORKFLOW_STREAM_GATEWAY_TOKEN: dev-token
+    ports:
+      - "8080:8080"
+    depends_on:
+      valkey:
+        condition: service_healthy
+
+secrets:
+  go_private_token:
+    file: ${GO_PRIVATE_TOKEN_FILE:-./.go_private_token}

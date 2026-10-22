@@ -1,0 +1,37 @@
+workflow-stream-gateway {{ .Chart.Version }} deployed.
+
+━━ REQUIRED ACTIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{{ if not .Values.existingSecret -}}
+⚠  Credentials are stored in Helm release history (base64, not encrypted).
+   Migrate to External Secrets Operator or AWS Secrets Manager CSI:
+     existingSecret: "workflow-stream-gateway-secrets"
+   Then remove secretValues from your values file.
+
+{{ end -}}
+{{ if not .Values.networkPolicy.enabled -}}
+⚠  networkPolicy.enabled is false. The API port (POST /internal/events) is
+   reachable by any pod in the cluster, and /metrics is unauthenticated and
+   reachable by any pod too. Enable in production:
+     networkPolicy.enabled: true
+   Ensure the ingress controller namespace label and event_consumer's own
+   pod-label selector match:
+     ingressControllerNamespaceSelector: {{ .Values.networkPolicy.ingressControllerNamespaceSelector | toJson }}
+     eventConsumerPodSelector: {{ .Values.networkPolicy.eventConsumerPodSelector | toJson }}
+
+{{ end -}}
+{{ if .Values.ingress.enabled -}}
+⚠  Ingress is enabled. GET /api/v1/stream needs its own carve-out from the
+   gateway's standard JWT/ext_authz chain — this chart's HTTPRoute alone
+   does not configure that (LLD §5.2/§10.3, Appendix B). Confirm with
+   whoever owns the Gateway config before relying on this route in
+   production.
+
+{{ end -}}
+━━ VERIFY DEPLOYMENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  kubectl rollout status deployment/{{ include "workflow-stream-gateway.fullname" . }} -n {{ .Release.Namespace }}
+  kubectl get pods -l {{ include "workflow-stream-gateway.selectorLabels" . | replace ": " "=" | replace "\n" "," }}
+
+Health:  http://<pod-ip>:{{ .Values.service.port }}/healthz
+Metrics: (cluster-internal only) http://<pod-ip>:{{ .Values.service.metricsPort }}/metrics

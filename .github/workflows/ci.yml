@@ -1,0 +1,161 @@
+# ci-gate: lets a draft PR (or a PR labeled "skip-ci") skip the expensive
+# jobs below while iterating — never applies on push (a merge to main),
+# since github.event.pull_request.* only exists on pull_request events.
+name: CI
+
+"on":
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  IMAGE_BASE: ghcr.io/bcbp-solutions-fzc-llc/workflow-stream-gateway
+
+jobs:
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        run: >
+          echo "run=${{
+            github.event_name != 'pull_request' ||
+            (github.event.pull_request.draft == false &&
+             !contains(github.event.pull_request.labels.*.name, 'skip-ci'))
+          }}" >> "$GITHUB_OUTPUT"
+
+  validate-quality:
+    name: Validate / Quality
+    needs: [ci-gate]
+    if: needs.ci-gate.outputs.run == 'true'
+    uses: ./.github/workflows/validate-quality.yml
+    secrets: inherit
+
+  validate-test:
+    name: Validate / Test
+    needs: [ci-gate]
+    if: needs.ci-gate.outputs.run == 'true'
+    uses: ./.github/workflows/validate-test.yml
+    secrets: inherit
+
+  build-image-cache:
+    name: Build image (cache)
+    needs: [ci-gate]
+    if: needs.ci-gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          config: .hadolint.yaml
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_BASE }}:${{ github.sha }}
+          build-args: BUILD_VERSION=${{ github.sha }}
+          secrets: go_private_token=${{ secrets.GO_PRIVATE_TOKEN }}
+          cache-from: type=gha,scope=stream-gateway
+          cache-to: type=gha,mode=max,scope=stream-gateway
+
+  trivy-cve-scan:
+    name: Trivy CVE scan
+    needs: [build-image-cache]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_BASE }}:${{ github.sha }}
+          build-args: BUILD_VERSION=${{ github.sha }}
+          secrets: go_private_token=${{ secrets.GO_PRIVATE_TOKEN }}
+          cache-from: type=gha,scope=stream-gateway
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_BASE }}:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          cache-dir: .trivy-cache
+
+  smoke-tests:
+    name: Smoke tests
+    needs: [build-image-cache]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_BASE }}:${{ github.sha }}
+          build-args: BUILD_VERSION=${{ github.sha }}
+          secrets: go_private_token=${{ secrets.GO_PRIVATE_TOKEN }}
+          cache-from: type=gha,scope=stream-gateway
+
+      - name: Smoke test the image against Valkey
+        env:
+          GO_PRIVATE_TOKEN: ${{ secrets.GO_PRIVATE_TOKEN }}
+          SMOKE_IMAGE: ${{ env.IMAGE_BASE }}:${{ github.sha }}
+        run: bash scripts/smoke-test.sh
+
+  pr-summary:
+    name: PR summary
+    if: always() && github.event_name == 'pull_request'
+    needs: [ci-gate, validate-quality, validate-test, build-image-cache, trivy-cve-scan, smoke-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "validate-quality, validate-test, the image build, the Trivy scan and the smoke test are the gates for this repo (ci-gate run=${{ needs.ci-gate.outputs.run }})"

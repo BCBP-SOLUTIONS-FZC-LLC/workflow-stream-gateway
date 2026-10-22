@@ -1,0 +1,87 @@
+version: 2
+
+# Grants Dependabot access to the private github.com/BCBP-SOLUTIONS-FZC-LLC/*
+# Go modules (platform-events, platform-gincommon, platform-pgcommon). Without
+# this, Dependabot cannot resolve the full module graph for ANY gomod update
+# (even unrelated public deps) and fails with git_dependencies_not_reachable —
+# confirmed in iam-user-profile (same org, same private modules).
+#
+# Requires a Dependabot secret named GO_PRIVATE_TOKEN — a PAT (classic or
+# fine-grained) with read access to BCBP-SOLUTIONS-FZC-LLC private repos.
+# Set it under Settings → Secrets and variables → Dependabot (NOT Actions —
+# these are separate secret stores even when reusing the same name/value).
+registries:
+  github-bcbp:
+    type: git
+    url: https://github.com
+    username: x-access-token
+    password: ${{ secrets.GO_PRIVATE_TOKEN }}
+
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    registries:
+      - github-bcbp
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 5
+    # Platform-libs update immediately when new versions are tagged.
+    # All other Go dependencies: prefer versions that have been available
+    # for at least 2 weeks to avoid pulling in recently-introduced bugs.
+    # Dependabot does not support time-based ignore rules natively; this
+    # is enforced via review policy (see CONTRIBUTING.md §Dependency Updates).
+    ignore:
+      # Never auto-update platform-libs via dependabot, as those are managed
+      # through explicit go get + team review:
+      - dependency-name: "github.com/BCBP-SOLUTIONS-FZC-LLC/*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # Group all non-platform patch+minor updates into a single weekly PR
+      # so the review queue doesn't get flooded.
+      go-patch-minor:
+        patterns: ["*"]
+        exclude-patterns: ["github.com/BCBP-SOLUTIONS-FZC-LLC/*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - "dependencies"
+      - "go"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 5
+    groups:
+      actions-all:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"

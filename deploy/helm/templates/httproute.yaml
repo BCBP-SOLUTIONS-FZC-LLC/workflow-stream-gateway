@@ -1,0 +1,48 @@
+{{- if and .Values.ingress.enabled (eq (.Values.ingress.type | default "Ingress") "HTTPRoute") }}
+# Gateway API HTTPRoute — attach to an Envoy Gateway (or any Gateway API-compatible
+# controller) by setting ingress.gateway.name in values.yaml.
+#
+# TLS termination is configured on the Gateway listener, not here.
+# For CORS and gateway-level rate limiting, enable ingress.securityPolicy.
+#
+# Only /api/v1/stream/tickets and /api/v1/stream are ever listed here.
+# POST /api/v1/internal/events is never routed through this HTTPRoute — it's
+# reached in-cluster via the Service directly (LLD §3.2). GET
+# /api/v1/stream's own carve-out from the standard JWT/ext_authz chain
+# (LLD §5.2, §10.3) is Gateway-level configuration this HTTPRoute doesn't
+# and can't resolve on its own — see values.yaml's ingress comment and
+# the LLD's Appendix B.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "workflow-stream-gateway.fullname" . }}
+  labels:
+    {{- include "workflow-stream-gateway.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ required "ingress.gateway.name is required when ingress.type is HTTPRoute" .Values.ingress.gateway.name }}
+      {{- with .Values.ingress.gateway.namespace }}
+      namespace: {{ . }}
+      {{- end }}
+      {{- with .Values.ingress.gateway.sectionName }}
+      sectionName: {{ . }}
+      {{- end }}
+  {{- if .Values.ingress.hosts }}
+  hostnames:
+    {{- range .Values.ingress.hosts }}
+    - {{ .host | quote }}
+    {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    {{- range .paths }}
+    - matches:
+        - path:
+            type: {{ .pathType | default "PathPrefix" }}
+            value: {{ .path | quote }}
+      backendRefs:
+        - name: {{ include "workflow-stream-gateway.fullname" $ }}
+          port: {{ $.Values.service.port }}
+    {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}

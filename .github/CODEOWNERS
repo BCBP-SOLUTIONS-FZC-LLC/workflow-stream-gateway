@@ -1,0 +1,22 @@
+# CODEOWNERS — workflow-stream-gateway
+#
+# Rules are evaluated top-to-bottom; the last matching pattern wins.
+# At least one review from each listed team is required before merging.
+#
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: platform-engineers own the whole repo
+*                                         @BCBP-SOLUTIONS-FZC-LLC/platform-engineers
+
+# CI/CD and repo configuration — also requires platform-sre review
+.github/                                  @BCBP-SOLUTIONS-FZC-LLC/platform-engineers @BCBP-SOLUTIONS-FZC-LLC/platform-sre
+Makefile                                  @BCBP-SOLUTIONS-FZC-LLC/platform-engineers @BCBP-SOLUTIONS-FZC-LLC/platform-sre
+Dockerfile                                @BCBP-SOLUTIONS-FZC-LLC/platform-engineers @BCBP-SOLUTIONS-FZC-LLC/platform-sre
+docker-compose.yml                        @BCBP-SOLUTIONS-FZC-LLC/platform-engineers @BCBP-SOLUTIONS-FZC-LLC/platform-sre
+
+# Public and internal HTTP contract
+docs/swagger/openapi.yaml                 @BCBP-SOLUTIONS-FZC-LLC/platform-engineers
+
+# Security-sensitive files
+.github/SECURITY.md                       @BCBP-SOLUTIONS-FZC-LLC/platform-sre
+SECURITY.md                               @BCBP-SOLUTIONS-FZC-LLC/platform-sre

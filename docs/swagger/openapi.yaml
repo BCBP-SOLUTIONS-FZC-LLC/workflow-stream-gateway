@@ -1,0 +1,345 @@
+openapi: "3.0.3"
+info:
+  title: Workflow Stream Gateway
+  version: "1.0.0"
+  description: >
+    Real-time dashboard push. Projects Execution Service's outbound domain events
+    to the browser over Server-Sent Events (SSE). Stateless except for Valkey
+    (ticket store, per-user event streams, connection/rate counters). See
+    workflow_stream_gateway.md for the full LLD.
+
+servers:
+  - url: https://api.internal/stream
+    description: Internal API gateway base for the ticket-mint endpoint only — GET /api/v1/stream itself is carved out of the standard gateway chain (§5.2, §9)
+
+security:
+  - GatewayTenantContext: []
+    UserContext: []
+
+tags:
+  - name: Stream
+    description: SSE ticket mint and the SSE connection endpoint itself.
+  - name: Internal (Events)
+    description: >
+      Service-to-service ingestion endpoint called by the shared Workflow-Events
+      Consumer (event_consumer), not routed through the gateway.
+
+components:
+  securitySchemes:
+    GatewayTenantContext:
+      type: apiKey
+      in: header
+      name: x-tenant-id
+      description: Tenant UUID injected by the API Gateway. Applies to POST /api/v1/stream/tickets only.
+    UserContext:
+      type: apiKey
+      in: header
+      name: x-user-id
+      description: Authenticated user UUID injected by the API Gateway. Applies to POST /api/v1/stream/tickets only.
+    StreamTicket:
+      type: apiKey
+      in: query
+      name: ticket
+      description: >
+        Opaque, short-lived (60s), reusable-within-TTL ticket minted by
+        POST /api/v1/stream/tickets. The sole source of connection identity for
+        GET /api/v1/stream — this route is carved out of the standard gateway
+        JWT-validation chain (no Authorization header ever reaches it) and is
+        NOT protected by GatewayTenantContext/UserContext.
+    InternalServiceAuth:
+      type: apiKey
+      in: header
+      name: x-internal-token
+      description: >
+        Service-to-service credential for the /internal route group
+        (RequireInternalToken, WORKFLOW_STREAM_GATEWAY_TOKEN) — the same
+        convention execution_service and definition_service already ship. Not
+        exposed through the Envoy public gateway; carries no gateway identity
+        headers. Tenant context for this route comes from the envelope's own
+        tenant_id, not from x-tenant-id.
+
+  parameters:
+    TenantIdHeader:
+      name: x-tenant-id
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Tenant UUID (injected by gateway).
+    UserIdHeader:
+      name: x-user-id
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Authenticated user UUID (injected by gateway).
+    LastEventIdHeader:
+      name: Last-Event-ID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: >
+        Native EventSource reconnect header. Takes precedence over the
+        last_event_id query parameter if both are present.
+
+  schemas:
+    TicketMintResponse:
+      type: object
+      required: [ticket, expires_in]
+      properties:
+        ticket:
+          type: string
+          description: 256-bit crypto/rand value, base64url-encoded.
+          example: "kQ2f-7bVvN9xJ3pQdR8mL5tYcW1zA6bC0dE9fG2hI4j"
+        expires_in:
+          type: integer
+          example: 60
+
+    ProblemDetails:
+      type: object
+      description: RFC-9457 problem-details body, matching this platform's shared error convention.
+      required: [type, title, status, detail, instance, code]
+      properties:
+        type:
+          type: string
+          format: uri
+          example: "https://errors.bcbp.io/workflow-stream-gateway/unauthorized"
+        title:
+          type: string
+          example: "Unauthorized"
+        status:
+          type: integer
+          example: 401
+        detail:
+          type: string
+          example: "missing or invalid ticket"
+        instance:
+          type: string
+          example: "/api/v1/stream"
+        code:
+          type: string
+          example: "UNAUTHORIZED"
+
+    Envelope:
+      type: object
+      description: >
+        The canonical platform-events wire envelope (platform-events/v2/pkg/events/envelope.go),
+        forwarded verbatim by event_consumer. Payload (`data`) is opaque here — this
+        service dispatches on `type` without a strict per-type schema, matching the
+        platform-wide /api/v1/internal/events convention (unrecognized types are accepted
+        and ignored with 200).
+      required: [id, type, source, time]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUID v7 envelope id.
+        type:
+          type: string
+          description: >
+            Dotted-lowercase wire type. One of the 12 types this service's
+            wf-workflow-dash-q subscription is filtered to: WorkflowTaskCreated,
+            .completed, .deferred, .reassigned, .sla-warning, .sla-breached,
+            WorkflowInstanceStarted, .paused, .resumed, .cancelled, .terminated,
+            .finished. Any other value is accepted and ignored with 200.
+          example: "WorkflowTaskCompleted"
+        source:
+          type: string
+          example: "workflow-execution-svc"
+        specversion:
+          type: string
+          example: "1"
+        tenant_id:
+          type: string
+          format: uuid
+        trace_id:
+          type: string
+          nullable: true
+        correlation_id:
+          type: string
+          nullable: true
+        subject:
+          type: string
+          nullable: true
+        actor:
+          type: string
+          nullable: true
+        ip_address:
+          type: string
+          nullable: true
+        user_agent:
+          type: string
+          nullable: true
+        dataschema:
+          type: string
+          nullable: true
+        time:
+          type: string
+          format: date-time
+        data:
+          type: object
+          description: Event-type-specific payload; opaque to this service beyond recipient-field extraction (§6 of the LLD).
+
+paths:
+  /api/v1/stream/tickets:
+    post:
+      operationId: mintStreamTicket
+      tags: [Stream]
+      summary: Mint a short-lived SSE connection ticket
+      description: >
+        Ordinary gateway-authenticated call. Snapshots the caller's own 6
+        gateway-injected headers into a 60-second Valkey-backed ticket, reusable
+        within that TTL to survive a brief EventSource reconnect blip without
+        client intervention.
+      security:
+        - GatewayTenantContext: []
+          UserContext: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/UserIdHeader'
+      responses:
+        "201":
+          description: Ticket minted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketMintResponse'
+        "413":
+          description: Request body larger than 10 MiB. Non-retryable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "429":
+          description: Ticket-mint rate limit exceeded (10/minute per tenant+user).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "503":
+          description: Valkey unreachable — fails closed, not open.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/stream:
+    get:
+      operationId: openStream
+      tags: [Stream]
+      summary: Open the SSE connection
+      description: >
+        Carved out of the standard gateway JWT-validation/ext_authz chain — no
+        Authorization header ever reaches this route. Connection identity comes
+        exclusively from the ticket's stored Valkey snapshot, never from any
+        client-supplied header or query value.
+      security:
+        - StreamTicket: []
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: last_event_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Fallback for clients that can't set the Last-Event-ID header directly (e.g. a wrapper reconnecting with a fresh ticket).
+        - $ref: '#/components/parameters/LastEventIdHeader'
+      responses:
+        "200":
+          description: >
+            SSE stream opened. Each frame's `data:` is a verbatim platform-events
+            Envelope (see workflow_stream_gateway.md §7 for the exact wire shape);
+            a `: keep-alive` comment every 15s; on backfill-window exhaustion, a
+            control frame `event: resync-required`.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: "no-cache, no-transform"
+            X-Accel-Buffering:
+              schema:
+                type: string
+                example: "no"
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          description: Ticket missing, expired, or not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "429":
+          description: Per-user connection cap exceeded (5 concurrent).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "503":
+          description: Valkey unreachable at ticket-validation time — fails closed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/internal/events:
+    post:
+      operationId: ingestInternalEvent
+      tags: [Internal (Events)]
+      summary: Ingest a forwarded domain-event envelope
+      description: >
+        Service-to-service ingest endpoint called by event_consumer (the shared
+        Workflow-Events Consumer), which subscribes wf-workflow-dash-q and
+        forwards each envelope here over HTTP, matching the identical
+        /api/v1/internal/events convention execution_service and definition_service
+        already ship. Not exposed on the public Envoy gateway; carries no
+        gateway identity headers. No dedup/idempotency table exists here —
+        duplicate delivery is harmless (workflow_stream_gateway.md §9.2).
+      security:
+        - InternalServiceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Envelope'
+      responses:
+        "200":
+          description: >
+            Every recipient's XADD succeeded, or the event type was unrecognized
+            (accepted and ignored).
+        "400":
+          description: Malformed envelope (unparseable JSON, or missing id/type/source/time). Non-retryable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "401":
+          description: Missing or invalid x-internal-token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "413":
+          description: Request body larger than 10 MiB. Non-retryable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "502":
+          description: >
+            At least one recipient's Valkey XADD failed. Transient, safe to
+            retry — a retry re-delivering to already-succeeded recipients is
+            harmless (§9.2).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'

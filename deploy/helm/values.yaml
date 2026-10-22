@@ -1,0 +1,213 @@
+replicaCount: 2 # basic-HA baseline — no LLD-specified number exists for this service (unlike definition_service's LLD §11.1); revisit with real usage data (LLD Appendix B)
+
+image:
+  repository: ghcr.io/bcbp-solutions-fzc-llc/workflow-stream-gateway
+  pullPolicy: IfNotPresent
+  tag: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+  # /metrics is served on its own dedicated listener (METRICS_PORT), separate
+  # from the API port — so NetworkPolicy can grant the monitoring namespace
+  # scrape access without also granting it access to the browser-facing
+  # SSE/ticket-mint API surface (punch-list item 7; LLD §12).
+  metricsPort: 9090
+
+# autoscaling — deliberately NOT enabled by default. This service scales on
+# open SSE connection count (workflow_stream_gateway_connections_open), not CPU/RPS (LLD §10.2)
+# — a CPU-based HPA would scale on the wrong signal entirely for a mostly-
+# idle-CPU, many-long-lived-connections workload. A connection-count-based
+# HPA needs a custom-metrics adapter (prometheus-adapter, mirroring
+# definition_service's own optional targetRPSPerReplica pattern) exposing
+# workflow_stream_gateway_connections_open — replica count, the exact target value, and
+# graceful-drain behavior on scale-down are all explicitly undecided
+# (LLD §10.2, Appendix B), not something to invent here. Fixed replicaCount
+# above is the deploy shape until that's resolved.
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 8
+  # targetConnectionsPerReplica: 2000   # sketch only — needs prometheus-adapter
+                                        # wired to workflow_stream_gateway_connections_open first
+
+resources:
+  # No LLD-specified request/limit numbers exist for this service — a
+  # judgment call (mirrors definition_service's own maxReplicas precedent
+  # for an unspecified value), not a documented figure. Revisit with real
+  # usage data.
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "250m"
+    memory: "256Mi"
+
+env:
+  APP_ENV: "prod" # one of local, dev, test, staging, prod; outside dev and local the internal token is required
+  HTTP_PORT: "8080"
+  METRICS_PORT: "9090"
+  OTEL_SERVICE_NAME: "workflow-stream-gateway"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "" # for example otel-collector.observability:4317; empty disables trace export
+  OTEL_EXPORTER_OTLP_INSECURE: "false"
+  OTEL_TRACES_SAMPLER_RATIO: "1.0"
+  VALKEY_ADDR: "" # cluster-internal Valkey address
+  VALKEY_DIAL_TIMEOUT: "2s"
+  VALKEY_READ_TIMEOUT: "1s"
+  VALKEY_WRITE_TIMEOUT: "1s"
+  TICKET_TTL: "60s"
+  TICKET_MINT_RATE_MAX: "10" # provisional — LLD §9.3/Appendix B, not validated against real usage
+  TICKET_MINT_RATE_WINDOW: "60s"
+  STREAM_RETENTION_WINDOW: "10m"
+  STREAM_KEY_TTL: "15m"
+  CONNECTION_CAP_PER_USER: "5" # provisional — LLD §9.3/Appendix B, not validated against real usage
+  HEARTBEAT_INTERVAL: "15s" # provisional — pending real ingress idle-timeout confirmation (LLD Appendix B)
+
+envFromSecret:
+  - VALKEY_PASSWORD
+  - WORKFLOW_STREAM_GATEWAY_TOKEN # required outside dev and local; the pod fails to start without it
+
+# existingSecret — preferred for production. See secret.yaml for the two
+# supported modes (existingSecret vs. secretValues).
+existingSecret: ""
+rotationEpoch: "0"
+secretValues:
+  VALKEY_PASSWORD: ""
+  WORKFLOW_STREAM_GATEWAY_TOKEN: ""
+
+# terminationGracePeriodSeconds covers cmd/server's own 10s shutdownTimeout
+# with headroom, but does NOT solve graceful SSE drain on its own: Go's
+# http.Server.Shutdown waits for in-flight handlers to return on their own
+# rather than cancelling their request context, so an open SSE connection
+# can outlive the shutdown signal until the process actually exits (a plain
+# TCP disconnect the client's own reconnect logic already handles, LLD §8).
+# Real graceful-drain behavior on rolling deploy is an explicit LLD
+# Appendix B open item, not solved here.
+terminationGracePeriodSeconds: 30
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  failureThreshold: 12 # 12 x 5s = 60s startup budget
+  timeoutSeconds: 3
+
+livenessProbe:
+  httpGet:
+    path: /healthz # trivial "process is running" check — no Valkey dependency, so a
+                    # transient Valkey blip never causes Kubernetes to kill and restart
+                    # the pod (that's readinessProbe's job, below)
+    port: 8080
+  initialDelaySeconds: 0
+  periodSeconds: 15
+  failureThreshold: 3
+  timeoutSeconds: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz # pings Valkey (LLD §9.4's fail-closed posture) — failing this only
+                   # pulls the pod out of Service/HTTPRoute rotation, it never restarts it
+    port: 8080
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 3
+
+# NetworkPolicy — a named-service allow-list, not a blanket same-namespace
+# podSelector: {} (the gap flagged against definition_service's and
+# iam-user-profile's own charts — both grant every pod in the namespace
+# access despite their own LLDs prescribing a named allow-list). This
+# chart has no legacy to match, so it's done right from day one: only the
+# gateway/ingress (ticket-mint + eventually the SSE stream route, LLD
+# Appendix B) and event_consumer (POST /api/v1/internal/events) may reach the API
+# port — no other same-namespace pod has any reason to call this service.
+networkPolicy:
+  enabled: true
+  ingressControllerNamespaceSelector:
+    kubernetes.io/metadata.name: envoy-gateway-system
+  ingressControllerPodSelector: {}
+  # event_consumer's own pod labels — the only other legitimate caller of
+  # this service's API port (POST /api/v1/internal/events, LLD §3.2).
+  eventConsumerPodSelector:
+    app.kubernetes.io/name: workflow-events-consumer
+  metricsIngress:
+    enabled: true
+    namespaceSelector:
+      kubernetes.io/metadata.name: monitoring
+    podSelector:
+      app.kubernetes.io/name: prometheus
+  additionalIngressRules: []
+  additionalEgressRules: []
+
+prometheusRule:
+  enabled: false
+  additionalLabels: {}
+
+serviceMonitor:
+  enabled: true
+  interval: "30s"
+  scrapeTimeout: "10s"
+  additionalLabels: {}
+  relabelings: []
+  namespaceSelector: {}
+
+# Ingress — disabled by default. Only /api/v1/stream/tickets and
+# /api/v1/stream are ever exposed through the Gateway; POST /api/v1/internal/events
+# is reached in-cluster via the Service directly (LLD §3.2), never routed
+# here. GET /api/v1/stream's own carve-out from the standard JWT/ext_authz
+# chain (LLD §5.2, §10.3) is Gateway-level configuration outside any
+# service's own chart (confirmed against definition_service's/
+# iam-user-profile's securitypolicy.yaml: SecurityPolicy here only ever
+# configures CORS/rate-limiting, never JWT) — a cross-team ask tracked in
+# the LLD's own Appendix B, not something this chart's HTTPRoute resolves.
+ingress:
+  enabled: false
+  type: HTTPRoute
+
+  hosts:
+    - host: workflow-stream-gateway.example.com
+      paths:
+        - path: /api/v1/stream/tickets
+          pathType: Exact
+        - path: /api/v1/stream
+          pathType: Exact
+
+  gateway:
+    name: ""
+    namespace: ""
+    sectionName: ""
+
+  securityPolicy:
+    enabled: false
+    cors:
+      enabled: false
+      allowOrigins: []
+      allowMethods:
+        - GET
+        - POST
+        - OPTIONS
+      # X-Tenant-ID / X-User-ID are deliberately NOT listed here: they are
+      # injected by the Envoy Gateway's ext_authz filter after JWT
+      # validation, never sent by the browser client itself.
+      allowHeaders:
+        - Authorization
+        - Content-Type
+        - Last-Event-ID
+      maxAge: "24h" # Envoy Gateway's SecurityPolicy CRD wants a Duration string, not raw seconds
+    # No rateLimit knob here: Envoy Gateway configures rate limiting via a
+    # separate BackendTrafficPolicy CRD, not a field on SecurityPolicy
+    # (verified via kubeconform; see securitypolicy.yaml's own comment).
+
+  className: ""
+  annotations: {}
+  tls: []

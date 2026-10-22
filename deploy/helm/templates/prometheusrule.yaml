@@ -1,0 +1,74 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "workflow-stream-gateway.fullname" . }}
+  labels:
+    {{- include "workflow-stream-gateway.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: workflow_stream_gateway_availability
+      rules:
+        - alert: StreamGatewayDown
+          expr: absent(up{job={{ include "workflow-stream-gateway.fullname" . | quote }}} == 1)
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: workflow-stream-gateway has no healthy replica
+        - alert: StreamGatewayReplicasMissing
+          expr: sum(up{job={{ include "workflow-stream-gateway.fullname" . | quote }}}) < 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: workflow-stream-gateway is below its minimum replica count
+    - name: workflow_stream_gateway_errors
+      rules:
+        - alert: StreamGatewayHighErrorRate
+          expr: |
+            sum(rate(platform_http_requests_total{job={{ include "workflow-stream-gateway.fullname" . | quote }}, status_class="5xx"}[5m]))
+              /
+            sum(rate(platform_http_requests_total{job={{ include "workflow-stream-gateway.fullname" . | quote }}}[5m]))
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: workflow-stream-gateway 5xx rate above 5%
+        - alert: StreamGatewayHTTPPanic
+          expr: increase(platform_http_panics_total{job={{ include "workflow-stream-gateway.fullname" . | quote }}}[5m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: A workflow-stream-gateway handler panicked
+        - alert: StreamGatewayValkeyUnavailable
+          expr: |
+            sum(increase(workflow_stream_gateway_connections_rejected_total{reason="valkey_unavailable"}[5m])) > 0
+              or
+            sum(increase(workflow_stream_gateway_tickets_minted_total{result="valkey_unavailable"}[5m])) > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: workflow-stream-gateway cannot reach Valkey and is rejecting clients
+        - alert: StreamGatewayEventIngestErrors
+          expr: sum(rate(workflow_stream_gateway_internal_events_ingest_total{result="error"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Sustained errors ingesting forwarded events
+    - name: workflow_stream_gateway_capacity
+      rules:
+        - alert: StreamGatewayConnectionCapRejections
+          expr: sum(increase(workflow_stream_gateway_connections_rejected_total{reason="cap_exceeded"}[15m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Clients are hitting the per-user connection cap
+{{- end }}

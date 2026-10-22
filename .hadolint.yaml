@@ -1,0 +1,4 @@
+failure-threshold: error
+ignored:
+  - DL3018  # apk: pin package versions — not applicable (distroless base)
+  - DL3064  # ARG/ENV flagged as "sensitive" — BUILD_VERSION is a public git tag
