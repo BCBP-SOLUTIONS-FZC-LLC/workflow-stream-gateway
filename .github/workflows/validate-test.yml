@@ -50,7 +50,7 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Tests: unit and integration (race, merged coverage)
+      - name: "Tests: unit and integration (race, merged coverage)"
         run: make test-ci
 
       - name: Coverage threshold gate

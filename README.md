@@ -3,7 +3,7 @@
 Real-time dashboard push for the BCBP Workflow Engine: it projects the Execution Service's task and instance events to the browser as Server-Sent Events, so a dashboard reflects state changes without polling.
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway`  
-**Module:** Go 1.26.9 · private module · a containerised microservice not yet deployed to any live environment
+**Module:** Go 1.26.10 · private module · a containerised microservice not yet deployed to any live environment
 
 ---
 

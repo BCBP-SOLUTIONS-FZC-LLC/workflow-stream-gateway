@@ -19,6 +19,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The module requires Go 1.26.10: `govulncheck` reports GO-2026-6809 (`crypto/x509`) on 1.26.9; the base image digest follows.
+- `validate-test.yml` parses: a step name with an unquoted colon broke the workflow and the release workflow that calls it.
 - **Platform libraries** `platform-events/v2` v2.1.0 and `platform-gincommon` v1.6.0; Go 1.26.9. Service metrics are prefixed `workflow_stream_gateway_`; the former `sse_*` and `internal_events_ingest_total` names are replaced.
 - `APP_ENV` must be one of `local`, `dev`, `test`, `staging`, `prod`; a malformed numeric or duration value fails startup instead of falling back to its default; the internal token is required outside dev and local, not only in prod.
 - The connection counter is released through a script that never leaves it negative, so a stray release cannot raise the per-user cap.
