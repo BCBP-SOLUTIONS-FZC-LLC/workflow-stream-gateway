@@ -41,7 +41,7 @@ COVER_PKG_FLOORS := internal/observability:85
 .PHONY: test-integration merge-coverage helm-lint lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
         cover cover-func cover-html cover-check cover-check-pkg \
         tidy fmt-check fix check lint lint-fix arch-lint vuln \
-        docker-build docker-lint docker-trivy docker-check \
+        docker-build docker-lint docker-trivy docker-check smoke-test \
         clean help
 
 all: build
@@ -279,6 +279,10 @@ docker-lint:
 ## docker-trivy: Scan source and dependencies for HIGH/CRITICAL CVEs
 docker-trivy:
 	$(TRIVY) fs . --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
+
+## smoke-test: Build the image and check it end to end against a real Valkey (requires GO_PRIVATE_TOKEN in env)
+smoke-test:
+	bash scripts/smoke-test.sh
 
 ## docker-check: Dockerfile lint + dependency CVE scan (no image build required)
 docker-check: docker-lint docker-trivy

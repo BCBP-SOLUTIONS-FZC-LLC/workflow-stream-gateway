@@ -151,10 +151,11 @@ Every series carries `domain` (`workflow`), `service` (`workflow-stream-gateway`
 | `make test-ci` | Both, with merged coverage |
 | `make check` | Format, lint, arch-lint, vet, metrics-lint, helm-lint, tests and the coverage gate |
 | `make lint-workflows` / `make vuln` / `make docker-check` | Workflow lint, dependency vulnerabilities, Dockerfile lint and scan |
+| `make smoke-test` | Build the image and check it end to end against a real Valkey (needs `GO_PRIVATE_TOKEN`) |
 
 ## CI
 
-Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then `validate-quality` and `validate-test`. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on pull requests that touch code or contracts.
+Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then `validate-quality` and `validate-test`, an image job that lints the Dockerfile and builds the image, a Trivy scan for fixable HIGH and CRITICAL findings, and a smoke test (`make smoke-test`) that runs the image against Valkey, mints a ticket, opens a stream and checks that an ingested event reaches it. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on pull requests that touch code or contracts.
 
 ## Versioning and releases
 
