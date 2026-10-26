@@ -1,5 +1,5 @@
 {{- $httpRouteEnabled := and .Values.ingress.enabled (eq (.Values.ingress.type | default "Ingress") "HTTPRoute") }}
-{{- if and $httpRouteEnabled .Values.ingress.securityPolicy.enabled .Values.ingress.securityPolicy.cors.enabled }}
+{{- if $httpRouteEnabled }}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
@@ -11,5 +11,7 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: {{ include "workflow-stream-gateway.fullname" . }}-stream
+  {{- if and .Values.ingress.securityPolicy.enabled .Values.ingress.securityPolicy.cors.enabled }}
   {{- include "workflow-stream-gateway.cors" . | nindent 2 }}
+  {{- end }}
 {{- end }}

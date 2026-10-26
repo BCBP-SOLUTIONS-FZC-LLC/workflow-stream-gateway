@@ -24,9 +24,9 @@ workflow-stream-gateway {{ .Chart.Version }} deployed.
 ⚠  Ingress is enabled. The ticket and stream routes each carry their own
    SecurityPolicy (LLD §10.3): the ticket policy merges with the Gateway's
    JWT/ext_authz chain, the stream policy replaces it, because the ticket in
-   the query is that route's only credential. Both render only with
-   ingress.securityPolicy.enabled and ingress.securityPolicy.cors.enabled;
-   without them GET /api/v1/stream stays behind the Gateway's authentication.
+   the query is that route's only credential. The stream policy renders
+   with the routes; CORS is added to both only with
+   ingress.securityPolicy.enabled and ingress.securityPolicy.cors.enabled.
    Needs Envoy Gateway 1.8 or later.
 
 {{ end -}}

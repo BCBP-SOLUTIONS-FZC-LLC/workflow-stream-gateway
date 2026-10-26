@@ -274,6 +274,12 @@ helm-policy-check:
 		|| { echo "helm-policy-check: the stream policy must target the stream route"; exit 1; }; \
 	! render -s templates/securitypolicy.yaml | grep -q "mergeType" \
 		|| { echo "helm-policy-check: the stream route's policy must replace the gateway's; the ticket is its only credential"; exit 1; }; \
+	$(HELM) template x deploy/helm $(HELM_LINT_VALUES) --set ingress.enabled=true --set ingress.gateway.name=gw -s templates/securitypolicy.yaml | grep -q "name: workflow-stream-gateway-stream" \
+		|| { echo "helm-policy-check: the stream route's policy must render whenever the route is exposed, with or without CORS; without it the route stays behind the gateway's JWT and every browser connection is refused"; exit 1; }; \
+	render -s templates/httproute.yaml | awk '/^kind: HTTPRoute/{n++} /request: 0s/{if (n==2) f=1} END{exit !f}' \
+		|| { echo "helm-policy-check: the stream route must set timeouts.request 0s, or the gateway's default 15s request timeout cuts every stream"; exit 1; }; \
+	[ "$$(render -s templates/httproute.yaml | grep -c 'request: 0s')" = 1 ] \
+		|| { echo "helm-policy-check: only the stream route may disable its request timeout"; exit 1; }; \
 	[ "$$(render -s templates/httproute.yaml | grep -c '^kind: HTTPRoute')" = 2 ] \
 		|| { echo "helm-policy-check: the ticket and stream paths need separate routes so each carries its own policy"; exit 1; }
 

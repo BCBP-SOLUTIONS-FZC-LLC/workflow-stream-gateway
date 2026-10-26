@@ -166,9 +166,10 @@ serviceMonitor:
 # through the Service (LLD §3.2). Each path has its own HTTPRoute so each carries
 # its own SecurityPolicy (LLD §10.3): the ticket policy merges with the Gateway's
 # JWT and authorisation filter; the stream policy has no mergeType and so replaces
-# it, because the ticket in the query is that route's only credential. Both
-# policies render with securityPolicy.enabled and cors.enabled; without them the
-# stream route stays behind the Gateway's authentication and refuses every browser.
+# it, because the ticket in the query is that route's only credential. The stream
+# policy renders whenever the routes are exposed, with CORS only when
+# securityPolicy.enabled and cors.enabled; the ticket policy exists to add CORS to the
+# Gateway's policy, so it renders with those two flags.
 ingress:
   enabled: false
   type: HTTPRoute

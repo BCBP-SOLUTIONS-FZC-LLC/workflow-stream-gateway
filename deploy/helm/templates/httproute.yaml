@@ -1,6 +1,6 @@
 {{- if and .Values.ingress.enabled (eq (.Values.ingress.type | default "Ingress") "HTTPRoute") }}
 {{- $root := . }}
-{{- range $route := list (dict "suffix" "tickets" "path" .Values.ingress.paths.tickets) (dict "suffix" "stream" "path" .Values.ingress.paths.stream) }}
+{{- range $route := list (dict "suffix" "tickets" "path" .Values.ingress.paths.tickets) (dict "suffix" "stream" "path" .Values.ingress.paths.stream "unbounded" true) }}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -31,5 +31,9 @@ spec:
       backendRefs:
         - name: {{ include "workflow-stream-gateway.fullname" $root }}
           port: {{ $root.Values.service.port }}
+      {{- if $route.unbounded }}
+      timeouts:
+        request: 0s
+      {{- end }}
 {{- end }}
 {{- end }}
