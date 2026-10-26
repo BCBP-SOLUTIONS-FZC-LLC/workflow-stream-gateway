@@ -19,6 +19,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- The Dockerfile left `~/.git-credentials`, with `GO_PRIVATE_TOKEN`, in a builder layer, and the release build exported that layer to a registry cache. The credential is written, used by `go mod download` and removed in one `RUN`, the release build no longer reads or exports a registry cache, and `make docker-lint` runs `scripts/dockerfile-credentials-check.sh`. Builder caches of earlier releases held the token, so `GO_PRIVATE_TOKEN` needs rotating.
 - `docs/swagger/openapi.yaml` documents the `401` the ticket mint answers when the gateway identity headers are missing; a test holds the documented statuses to the router's answer.
 - The chart's one SecurityPolicy covered both routes and set no merge type, so enabling it replaced the Gateway's JWT validation and authorisation filter on the ticket route as well. The ticket and stream paths are now separate HTTPRoutes: the ticket policy merges with the Gateway's, the stream policy replaces it (the ticket is that route's only credential). `ingress.hosts[].paths` is replaced by `ingress.paths.tickets` and `ingress.paths.stream`; `make helm-policy-check`, part of `helm-lint`, holds both properties.
 

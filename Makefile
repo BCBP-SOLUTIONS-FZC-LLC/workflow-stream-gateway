@@ -292,6 +292,7 @@ docker-build:
 ## docker-lint: Lint the Dockerfile with hadolint
 docker-lint:
 	$(HADOLINT) --config .hadolint.yaml Dockerfile
+	@scripts/dockerfile-credentials-check.sh
 
 ## docker-trivy: Scan source and dependencies for HIGH/CRITICAL CVEs
 docker-trivy:
