@@ -1,0 +1,16 @@
+{{- $httpRouteEnabled := and .Values.ingress.enabled (eq (.Values.ingress.type | default "Ingress") "HTTPRoute") }}
+{{- if and $httpRouteEnabled .Values.ingress.securityPolicy.enabled .Values.ingress.securityPolicy.cors.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ include "workflow-stream-gateway.fullname" . }}-tickets
+  labels:
+    {{- include "workflow-stream-gateway.labels" . | nindent 4 }}
+spec:
+  mergeType: StrategicMerge
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: {{ include "workflow-stream-gateway.fullname" . }}-tickets
+  {{- include "workflow-stream-gateway.cors" . | nindent 2 }}
+{{- end }}

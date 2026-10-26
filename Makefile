@@ -38,7 +38,7 @@ COVER_THRESHOLD := 90
 # initialisation, which fail only when a platform library refuses its own identity.
 COVER_PKG_FLOORS := internal/observability:85
 
-.PHONY: test-integration merge-coverage helm-lint lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
+.PHONY: test-integration merge-coverage helm-lint helm-policy-check lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
         cover cover-func cover-html cover-check cover-check-pkg \
         tidy fmt-check fix check lint lint-fix arch-lint vuln \
         docker-build docker-lint docker-trivy docker-check smoke-test \
@@ -247,7 +247,24 @@ helm-lint:
 	@mkdir -p $(TOOLS_DIR)
 	$(HELM) template deploy/helm $(HELM_LINT_VALUES) > $(TOOLS_DIR)/helm-rendered.yaml
 	$(KUBECONFORM) -strict -skip PrometheusRule,ServiceMonitor,HTTPRoute,SecurityPolicy $(TOOLS_DIR)/helm-rendered.yaml
+	@$(MAKE) helm-policy-check
 	@echo "✓ helm chart valid"
+
+## helm-policy-check: The ticket route merges with the gateway's auth policy; the stream route replaces it (its ticket is the only credential)
+helm-policy-check:
+	@render() { $(HELM) template x deploy/helm $(HELM_LINT_VALUES) --set ingress.enabled=true --set ingress.gateway.name=gw \
+		--set ingress.securityPolicy.enabled=true --set ingress.securityPolicy.cors.enabled=true \
+		--set ingress.securityPolicy.cors.allowOrigins[0]=https://app.example.com "$$@"; }; \
+	render -s templates/securitypolicy-tickets.yaml | grep -q "mergeType: StrategicMerge" \
+		|| { echo "helm-policy-check: the ticket route's policy must merge with the gateway's, or it loses JWT validation and the identity headers"; exit 1; }; \
+	render -s templates/securitypolicy-tickets.yaml | grep -q "name: workflow-stream-gateway-tickets" \
+		|| { echo "helm-policy-check: the ticket policy must target the ticket route"; exit 1; }; \
+	render -s templates/securitypolicy.yaml | grep -q "name: workflow-stream-gateway-stream" \
+		|| { echo "helm-policy-check: the stream policy must target the stream route"; exit 1; }; \
+	! render -s templates/securitypolicy.yaml | grep -q "mergeType" \
+		|| { echo "helm-policy-check: the stream route's policy must replace the gateway's; the ticket is its only credential"; exit 1; }; \
+	[ "$$(render -s templates/httproute.yaml | grep -c '^kind: HTTPRoute')" = 2 ] \
+		|| { echo "helm-policy-check: the ticket and stream paths need separate routes so each carries its own policy"; exit 1; }
 
 ## pin-base-images: Resolve current digests for the Dockerfile base images and pin them
 pin-base-images:

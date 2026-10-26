@@ -10,8 +10,8 @@
 | Service | Workflow Stream Gateway (`workflow-stream-gateway`) |
 | Supersedes | `dashboard_stream_gateway.md` (proposal, rev 1.2) — see that document's own superseded banner |
 | Subsystem | Workflow Engine — real-time dashboard push |
-| Version | 1.9 |
-| Date | 2026-10-09 |
+| Version | 1.10 |
+| Date | 2026-10-26 |
 | Status | Approved |
 | Audience | Workflow Engine team, platform/infra |
 | Owner database | None — Valkey only (stateless service) |
@@ -30,6 +30,7 @@
 | 1.7 | 2026-09-10 | All 11 consumed wire types are PascalCase (`WorkflowTaskCreated`, etc.), matching `execution_service`'s own outbound event-catalogue migration and the platform-wide IAM naming convention — not dotted-lowercase as previously documented and implemented. §3.1's const block, its routing-config example, and §6's payload-reference table (which previously carried the dotted form and the AsyncAPI message name as two separate columns — now the same string, collapsed to one column) are all updated; `internal/usecase/fanout.go` and its tests are the corresponding code change. |
 | 1.8 | 2026-09-22 | §3.2's handler-behaviour step 2 said "12 known wire types" where §3.1's const block, `internal/usecase/fanout.go` and this document's own rev 1.7 row and §3.2 filter-policy note all carry 11. Corrected to 11. **Appendix B** gains the four items the body already pointed at it for and it did not carry (three infrastructure-provisioning items in one entry, plus producer onboarding): the `wf-workflow-dash-q` filter policy (§3.2), the ingress idle-timeout the heartbeat interval is provisional against (§7, §11, §12), replica/HPA/drain behaviour (§10.3), and `tender.events`/`notification.events` onboarding (§1). |
 | 1.9 | 2026-10-09 | **Platform observability standard and connection-counter hardening** (§4, §11, §12, §13). Metrics are built through `platform-gincommon` and named `workflow_stream_gateway_*`, replacing the `sse_*` names; the chart gains alert rules and the `OTEL_*` settings. `APP_ENV` is validated against `local`, `dev`, `test`, `staging`, `prod`, the internal token is required outside dev and local, and a malformed value fails startup. The ticket and internal routes cap request bodies at 10 MiB. The connection counter is refreshed while a connection is open and released without going negative; before this a connection open longer than the counter lifetime dropped out of the cap and a stray release raised it. `api/asyncapi.yaml` documents the 11 consumed event types. |
+| 1.10 | 2026-10-26 | **The route carve-out lives in this service's chart** (§5.2, §10.3, Appendix A Decision 3, Appendix B). `GET /api/v1/stream` and `POST /api/v1/stream/tickets` are separate HTTPRoutes, each with its own SecurityPolicy. The ticket policy merges with the Gateway's JWT and authorisation filter. The stream policy sets no merge type, so it replaces the Gateway policy for that route and removes both filters there. One policy for both paths, as the chart held before, would have removed JWT validation and the identity headers from the ticket route as well. Both policies render with `securityPolicy.enabled` and `cors.enabled`; without them the stream route stays behind the Gateway's authentication. The platform's confirmation that a service chart may replace the Gateway policy on a route is the one open item. |
 
 ---
 
@@ -97,7 +98,7 @@ One binary, `cmd/server`, one deployable. Unlike Execution Service (`cmd/server`
 | --- | --- | --- |
 | Valkey | Ticket store, per-user event streams, connection/rate counters — the service's *only* state | Fail-closed on ticket mint/validate (§9); an already-open connection's live `XREAD` loop degrades per Appendix B |
 | `event_consumer` | Delivers `wf-workflow-events` envelopes via `POST /internal/events` | This service is a passive HTTP target; `event_consumer` owns SQS receive/retry/DLQ semantics entirely (§3) |
-| Envoy Gateway | Standard JWT/`ext_authz` chain for `POST /api/v1/stream/tickets`; carved out entirely for `GET /api/v1/stream` and `POST /internal/events` (§9) | N/A — routing config, not a runtime dependency |
+| Envoy Gateway | Standard JWT/`ext_authz` chain for `POST /api/v1/stream/tickets`; the stream route's own policy replaces the Gateway's for `GET /api/v1/stream` (§10.3); `POST /internal/events` is never routed through it (§9) | N/A — routing config, not a runtime dependency |
 
 ### 2.4 Why Execution doesn't hold these connections itself
 
@@ -227,7 +228,7 @@ Ordinary gateway-authenticated endpoint (`ProtectedMiddlewares`/`RequestContext`
 
 ### 5.2 `GET /api/v1/stream`
 
-The actual SSE endpoint. Explicitly carved out of the standard gateway JWT-validation/`ext_authz` chain at the Envoy route-config level — no `Authorization` header will ever reach this route, matching the class of exception `/internal/events` endpoints already establish platform-wide, for a different reason (this is browser-facing and machine-unauthenticatable via `EventSource`, not machine-to-machine).
+The actual SSE endpoint. Carved out of the standard gateway JWT-validation/`ext_authz` chain by this service's own route policy (§10.3) — no `Authorization` header will ever reach this route, matching the class of exception `/internal/events` endpoints already establish platform-wide, for a different reason (this is browser-facing and machine-unauthenticatable via `EventSource`, not machine-to-machine).
 
 - **Query params.** `ticket` (required), `last_event_id` (optional).
 - **Header.** `Last-Event-ID` (optional) — takes precedence over the `last_event_id` query param if both are present, matching native browser `EventSource` reconnect behavior.
@@ -365,8 +366,9 @@ workflow-stream-gateway/
 │   │       └── valkey/               # ticket store, streams, counters (go-redis/v9)
 │   └── config/
 ├── deploy/helm/templates/
-│   ├── httproute.yaml                # ticket-mint only; /stream is carved out (§5.2)
-│   ├── securitypolicy.yaml           # CORS/rate-limit on the ticket-mint HTTPRoute
+│   ├── httproute.yaml                # one HTTPRoute per path: tickets, stream (§10.3)
+│   ├── securitypolicy-tickets.yaml   # merges with the Gateway's JWT and authorisation filter
+│   ├── securitypolicy.yaml           # stream route: replaces the Gateway policy (the ticket is the credential)
 │   └── networkpolicy.yaml            # standard ingress-controller + same-namespace rules
 ├── docker-compose.yml                # Valkey only
 └── go.mod
@@ -380,7 +382,7 @@ Scales on open-connection count, not request QPS — a different signal from eve
 
 ### 10.3 Envoy route configuration
 
-`GET /api/v1/stream`'s carve-out from the standard gateway JWT-validation chain is a real, concrete change needed in the platform's Envoy/API-gateway routing configuration — not something this service's own Helm chart can unilaterally guarantee (Appendix B).
+The ticket route and the stream route are separate HTTPRoutes in this service's chart, each with its own Envoy Gateway SecurityPolicy. The ticket route's policy sets `mergeType: StrategicMerge`, so it keeps the Gateway's JWT validation and authorisation filter and adds CORS. The stream route's policy sets no merge type; a route policy without one replaces the Gateway's, which removes JWT validation and the authorisation filter for `GET /api/v1/stream`. The ticket in the query is that route's only credential (§5.2). The route stays behind the Gateway's authentication unless the stream policy is rendered, so an unconfigured deployment refuses every browser connection rather than admitting one. Merging requires Envoy Gateway 1.8 or later. Whether the platform admits a service chart replacing the Gateway policy on a route is for the platform team to confirm (Appendix B).
 
 ### 10.4 Health probes
 
@@ -446,7 +448,7 @@ Scales on open-connection count, not request QPS — a different signal from eve
 | --- | --- | --- |
 | 1 | Event ingestion routes through `event_consumer` via a standard `POST /internal/events` handler; this service runs no SQS/SNS consumer of its own | Reversed from the superseded proposal. Verified against `event_consumer`'s actual code: `Target.forward()` does a plain `POST <addr>/internal/events` + `x-internal-token`, identical in shape to every other `/internal/events` handler in this platform; `config/topology.yaml` documents onboarding a new target as config-only, no code change. The proposal's stated reason for rejecting this ("no idempotent-DB-ingest need to justify the extra hop") doesn't hold: this service needs no idempotency guarantee either way (Decision 9 below), so there's no requirement the shared consumer's model fails to satisfy. Removes an entire component (SQS/SNS client, receive/retry/DLQ logic) from this service's scope. |
 | 2 | SSE auth: short-lived (60s), reusable-within-TTL, opaque Valkey ticket minted via an authenticated REST call, passed as `?ticket=` on `GET /api/v1/stream` | Solves `EventSource`'s no-custom-headers limitation without a new session-cookie mechanism; reusability preserves native browser reconnect on brief blips. Carried from the superseded proposal, unaffected by Decision 1. |
-| 3 | `GET /api/v1/stream` is carved out of the standard gateway JWT-validation chain; this service validates the ticket itself | No `Authorization` header will ever reach this route — the same class of exception `/internal/events` routes already establish, for a different reason (browser-unauthenticatable vs. machine-to-machine). |
+| 3 | `GET /api/v1/stream` is carved out of the standard gateway JWT-validation chain by this service's own route policy; this service validates the ticket itself | The carve-out lives with the service that implements the replacement authentication, as every Workflow service owns its own route policy (§10.3). No `Authorization` header will ever reach this route — the same class of exception `/internal/events` routes already establish, for a different reason (browser-unauthenticatable vs. machine-to-machine). |
 | 4 | Ticket-store lookups fail closed (`503`) on Valkey unavailability | Auth-critical, unlike the fail-open compiled-plan-cache precedent elsewhere in this platform. |
 | 5 | Fan-out routing key is `(tenant_id, user_id)`, derived per-event from `assignee_user_ids[]`/`started_by_user_id`/`old_user_id`+`new_user_id` | Matches the platform's existing outbound-event payload-shaping convention exactly; no lookup needed. |
 | 6 | `data:` is the domain event's own envelope+payload verbatim | A real JSON Patch model needs a canonical-state-diffing engine this component explicitly isn't; the frontend's existing reducer pattern already handles self-describing facts. |
@@ -467,7 +469,7 @@ Scales on open-connection count, not request QPS — a different signal from eve
 
 ## Appendix B: Open Items
 
-- **The Envoy/API-gateway route-config carve-out for `GET /api/v1/stream`** (§5.2, §10.3) — a cross-team ask to whoever owns that configuration, same unresolved status the superseded proposal already carried.
+- **Platform confirmation of the route carve-out for `GET /api/v1/stream`** (§5.2, §10.3). The policy is in this service's chart; the platform team confirms that a service chart may replace the Gateway policy on a route, and that no admission rule refuses it.
 - **Resolved 2026-08-24 — whether this service's generic event relay is sufficient for business-service-owned UI surfaces (e.g. Tender's own dashboard needs): yes.** Workflow's own UI (configuring workflows, viewing graphs, etc.) is a distinct surface from Tender's UI — this service was never meant to serve Tender's UI directly. Workflow sends its generic `WorkflowTask*`/`WorkflowInstance*` facts to Tender; Tender renders whatever its own UI needs from those facts. No bespoke per-consumer channel is required.
 - **Task-scoped broadcast beyond the department tier is deferred** — a genuine tenant-wide "every task event, not just instance events" firehose already exists for `tenant_admin`/`tenant_owner` (§6.2 already carries all types), but no additional broadcast shape beyond the two tiers built 2026-08-24 (tenant-wide, per-department) has been designed. Revisit if a real requirement emerges.
 - **Infrastructure provisioning this document references but does not design.** Three items the prose points here for, each owned outside any application repo:

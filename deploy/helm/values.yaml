@@ -161,26 +161,24 @@ serviceMonitor:
   relabelings: []
   namespaceSelector: {}
 
-# Ingress — disabled by default. Only /api/v1/stream/tickets and
-# /api/v1/stream are ever exposed through the Gateway; POST /api/v1/internal/events
-# is reached in-cluster via the Service directly (LLD §3.2), never routed
-# here. GET /api/v1/stream's own carve-out from the standard JWT/ext_authz
-# chain (LLD §5.2, §10.3) is Gateway-level configuration outside any
-# service's own chart (confirmed against definition_service's/
-# iam-user-profile's securitypolicy.yaml: SecurityPolicy here only ever
-# configures CORS/rate-limiting, never JWT) — a cross-team ask tracked in
-# the LLD's own Appendix B, not something this chart's HTTPRoute resolves.
+# Ingress — disabled by default. Only the ticket route and the stream route are
+# exposed through the Gateway; POST /api/v1/internal/events is reached in-cluster
+# through the Service (LLD §3.2). Each path has its own HTTPRoute so each carries
+# its own SecurityPolicy (LLD §10.3): the ticket policy merges with the Gateway's
+# JWT and authorisation filter; the stream policy has no mergeType and so replaces
+# it, because the ticket in the query is that route's only credential. Both
+# policies render with securityPolicy.enabled and cors.enabled; without them the
+# stream route stays behind the Gateway's authentication and refuses every browser.
 ingress:
   enabled: false
   type: HTTPRoute
 
   hosts:
     - host: workflow-stream-gateway.example.com
-      paths:
-        - path: /api/v1/stream/tickets
-          pathType: Exact
-        - path: /api/v1/stream
-          pathType: Exact
+
+  paths:
+    tickets: /api/v1/stream/tickets
+    stream: /api/v1/stream
 
   gateway:
     name: ""

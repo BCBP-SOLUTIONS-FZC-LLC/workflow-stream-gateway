@@ -17,6 +17,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - A `PrometheusRule` in the chart (availability, errors, panics, Valkey outage, ingest errors, cap rejections), the `OTEL_*` settings, `helm-lint`, `lint-workflows` and a Dockerfile digest pin check.
 - A release workflow (changelog gate, image build, Cosign signature, GitHub Release), a changelog check, CODEOWNERS, issue and pull request templates, `.editorconfig`, a pre-commit hook, ARCHITECTURE and VERSIONING.
 
+### Fixed
+
+- The chart's one SecurityPolicy covered both routes and set no merge type, so enabling it replaced the Gateway's JWT validation and authorisation filter on the ticket route as well. The ticket and stream paths are now separate HTTPRoutes: the ticket policy merges with the Gateway's, the stream policy replaces it (the ticket is that route's only credential). `ingress.hosts[].paths` is replaced by `ingress.paths.tickets` and `ingress.paths.stream`; `make helm-policy-check`, part of `helm-lint`, holds both properties.
+
 ### Changed
 
 - `platform-events/v2` is `v2.2.1` (consumer-side dead-letter fixes, Go 1.26.10; no API change).
