@@ -13,7 +13,7 @@ service:
   type: ClusterIP
   port: 8080
   # /metrics is served on its own dedicated listener (METRICS_PORT), separate
-  # from the API port — so NetworkPolicy can grant the monitoring namespace
+  # from the API port — so NetworkPolicy can grant the observability namespace
   # scrape access without also granting it access to the browser-facing
   # SSE/ticket-mint API surface (punch-list item 7; LLD §12).
   metricsPort: 9090
@@ -134,7 +134,7 @@ readinessProbe:
 networkPolicy:
   enabled: true
   ingressControllerNamespaceSelector:
-    kubernetes.io/metadata.name: envoy-gateway-system
+    kubernetes.io/metadata.name: gateway
   ingressControllerPodSelector: {}
   # event_consumer's own pod labels — the only other legitimate caller of
   # this service's API port (POST /api/v1/internal/events, LLD §3.2).
@@ -143,7 +143,7 @@ networkPolicy:
   metricsIngress:
     enabled: true
     namespaceSelector:
-      kubernetes.io/metadata.name: monitoring
+      kubernetes.io/metadata.name: observability
     podSelector:
       app.kubernetes.io/name: prometheus
   additionalIngressRules: []

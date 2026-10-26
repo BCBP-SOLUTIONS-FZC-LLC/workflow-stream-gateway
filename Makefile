@@ -38,7 +38,7 @@ COVER_THRESHOLD := 90
 # initialisation, which fail only when a platform library refuses its own identity.
 COVER_PKG_FLOORS := internal/observability:85
 
-.PHONY: test-integration merge-coverage helm-lint helm-policy-check lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
+.PHONY: test-integration merge-coverage helm-lint helm-policy-check helm-namespace-check lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
         cover cover-func cover-html cover-check cover-check-pkg \
         tidy fmt-check fix check lint lint-fix arch-lint vuln \
         docker-build docker-lint docker-trivy docker-check smoke-test \
@@ -248,7 +248,18 @@ helm-lint:
 	$(HELM) template deploy/helm $(HELM_LINT_VALUES) > $(TOOLS_DIR)/helm-rendered.yaml
 	$(KUBECONFORM) -strict -skip PrometheusRule,ServiceMonitor,HTTPRoute,SecurityPolicy $(TOOLS_DIR)/helm-rendered.yaml
 	@$(MAKE) helm-policy-check
+	@$(MAKE) helm-namespace-check
 	@echo "✓ helm chart valid"
+
+## helm-namespace-check: The NetworkPolicy admits the platform's `gateway` namespace for the API and `observability` for the scrape
+helm-namespace-check:
+	@np="$$($(HELM) template x deploy/helm $(HELM_LINT_VALUES) -s templates/networkpolicy.yaml)"; \
+	for ns in gateway observability; do \
+		echo "$$np" | grep -q "kubernetes.io/metadata.name: $$ns$$" \
+			|| { echo "helm-namespace-check: the NetworkPolicy does not select the $$ns namespace"; exit 1; }; \
+	done; \
+	! echo "$$np" | grep -qE "kubernetes.io/metadata.name: (envoy-gateway-system|monitoring)$$" \
+		|| { echo "helm-namespace-check: the NetworkPolicy still selects a pre-rename namespace"; exit 1; }
 
 ## helm-policy-check: The ticket route merges with the gateway's auth policy; the stream route replaces it (its ticket is the only credential)
 helm-policy-check:

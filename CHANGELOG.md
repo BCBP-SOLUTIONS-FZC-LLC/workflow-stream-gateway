@@ -26,6 +26,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The NetworkPolicy selects the platform namespaces `gateway` (Envoy Gateway data plane) and `observability` (Prometheus), the names IAM's charts use, in place of `envoy-gateway-system` and `monitoring`; `make helm-namespace-check` holds it.
 - `platform-events/v2` is `v2.2.1` (consumer-side dead-letter fixes, Go 1.26.10; no API change).
 - CI runs the three checks the organisation requires and this repository lacked: `Build image (cache)` (Dockerfile lint and image build), `Trivy CVE scan` and `Smoke tests` (`make smoke-test`: the image against a real Valkey, a ticket minted, a stream opened and an ingested event received on it).
 - The module requires Go 1.26.10: `govulncheck` reports GO-2026-6809 (`crypto/x509`) on 1.26.9; the base image digest follows.
