@@ -17,8 +17,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - A `PrometheusRule` in the chart (availability, errors, panics, Valkey outage, ingest errors, cap rejections), the `OTEL_*` settings, `helm-lint`, `lint-workflows` and a Dockerfile digest pin check.
 - A release workflow (changelog gate, image build, Cosign signature, GitHub Release), a changelog check, CODEOWNERS, issue and pull request templates, `.editorconfig`, a pre-commit hook, ARCHITECTURE and VERSIONING.
 
+### Fixed
+
+- The stream route's policy renders whenever the routes are exposed, with CORS only when `ingress.securityPolicy.cors.enabled`; it rendered only with CORS, so a same-origin deployment left the stream route behind the gateway's JWT and every `EventSource` got a 401. The stream route also sets `timeouts.request: 0s`, since the gateway's default 15 s request timeout ends a stream.
+- `docs/swagger/openapi.yaml` documents `GET /healthz` and `GET /readyz`, as Definition's and Execution's specs do, and the parity test compares them with the router instead of skipping them.
+- The Dockerfile left `~/.git-credentials`, with `GO_PRIVATE_TOKEN`, in a builder layer, and the release build exported that layer to a registry cache. The credential is written, used by `go mod download` and removed in one `RUN`, the release build no longer reads or exports a registry cache, and `make docker-lint` and the CI image job run `scripts/dockerfile-credentials-check.sh`. Builder caches of earlier releases held the token, so `GO_PRIVATE_TOKEN` needs rotating.
+- `docs/swagger/openapi.yaml` documents the `401` the ticket mint answers when the gateway identity headers are missing; a test holds the documented statuses to the router's answer.
+- The chart's one SecurityPolicy covered both routes and set no merge type, so enabling it replaced the Gateway's JWT validation and authorisation filter on the ticket route as well. The ticket and stream paths are now separate HTTPRoutes: the ticket policy merges with the Gateway's, the stream policy replaces it (the ticket is that route's only credential). `ingress.hosts[].paths` is replaced by `ingress.paths.tickets` and `ingress.paths.stream`; `make helm-policy-check`, part of `helm-lint`, holds both properties.
+
 ### Changed
 
+- The NetworkPolicy selects the platform namespaces `gateway` (Envoy Gateway data plane) and `observability` (Prometheus), the names IAM's charts use, in place of `envoy-gateway-system` and `monitoring`; `make helm-namespace-check` holds it.
+- `platform-events/v2` is `v2.2.1` (consumer-side dead-letter fixes, Go 1.26.10; no API change).
 - CI runs the three checks the organisation requires and this repository lacked: `Build image (cache)` (Dockerfile lint and image build), `Trivy CVE scan` and `Smoke tests` (`make smoke-test`: the image against a real Valkey, a ticket minted, a stream opened and an ingested event received on it).
 - The module requires Go 1.26.10: `govulncheck` reports GO-2026-6809 (`crypto/x509`) on 1.26.9; the base image digest follows.
 - `validate-test.yml` parses: a step name with an unquoted colon broke the workflow and the release workflow that calls it.

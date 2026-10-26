@@ -1,6 +1,8 @@
 package http
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"sort"
@@ -20,8 +22,6 @@ const (
 	asyncAPISpec = "../../../../api/asyncapi.yaml"
 )
 
-var operationalRoutes = map[string]bool{"/healthz": true, "/readyz": true}
-
 func specOperations(t *testing.T) []string {
 	t.Helper()
 	doc, err := openapi3.NewLoader().LoadFromFile(openAPISpec)
@@ -29,9 +29,6 @@ func specOperations(t *testing.T) []string {
 	param := regexp.MustCompile(`\{([^}]+)\}`)
 	var ops []string
 	for p, item := range doc.Paths.Map() {
-		if operationalRoutes[p] {
-			continue
-		}
 		for method := range item.Operations() {
 			ops = append(ops, method+" "+param.ReplaceAllString(p, ":$1"))
 		}
@@ -45,9 +42,6 @@ func routerOperations() []string {
 	gin.SetMode(gin.TestMode)
 	var ops []string
 	for _, r := range NewRouter(testRouterConfig()).Routes() {
-		if operationalRoutes[r.Path] {
-			continue
-		}
 		ops = append(ops, r.Method+" "+r.Path)
 	}
 	sort.Strings(ops)
@@ -79,4 +73,16 @@ func TestAsyncAPIMessagesMatchKnownEventTypes(t *testing.T) {
 	known := append([]string(nil), usecase.KnownEventTypes()...)
 	sort.Strings(known)
 	assert.Equal(t, known, documented, "api/asyncapi.yaml must document exactly the event types the service routes")
+}
+
+func TestTicketMintDocumentsTheStatusItAnswersWithoutIdentityHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	NewRouter(testRouterConfig()).ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil))
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+
+	doc, err := openapi3.NewLoader().LoadFromFile(openAPISpec)
+	require.NoError(t, err)
+	op := doc.Paths.Find("/api/v1/stream/tickets").Post
+	assert.NotNil(t, op.Responses.Status(w.Code), "the ticket mint answers %d without the gateway identity headers; docs/swagger/openapi.yaml must document it", w.Code)
 }

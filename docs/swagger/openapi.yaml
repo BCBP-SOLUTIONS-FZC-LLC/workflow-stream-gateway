@@ -17,6 +17,8 @@ security:
     UserContext: []
 
 tags:
+  - name: Ops
+    description: Liveness and readiness probes, served at the root outside the `/api/v1` prefix.
   - name: Stream
     description: SSE ticket mint and the SSE connection endpoint itself.
   - name: Internal (Events)
@@ -184,6 +186,38 @@ components:
           description: Event-type-specific payload; opaque to this service beyond recipient-field extraction (§6 of the LLD).
 
 paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      tags: [Ops]
+      summary: Liveness probe
+      description: Returns 200 while the process is alive. No dependency checks.
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+
+  /readyz:
+    get:
+      operationId: getReadyz
+      tags: [Ops]
+      summary: Readiness probe
+      description: Returns 200 while Valkey answers; only pulls the pod out of rotation, never restarts it. The body is empty.
+      security: []
+      responses:
+        "200":
+          description: Valkey answers.
+        "503":
+          description: Valkey is unreachable.
+
   /api/v1/stream/tickets:
     post:
       operationId: mintStreamTicket
@@ -207,6 +241,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TicketMintResponse'
+        "401":
+          description: The gateway identity headers are missing; only a request that bypassed the gateway lacks them.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         "413":
           description: Request body larger than 10 MiB. Non-retryable.
           content:

@@ -127,7 +127,7 @@ Tests fail when the OpenAPI and the router list different operations, or the Asy
 
 ## Deployment
 
-One image from the `Dockerfile`, base images pinned by digest (`make pin-base-images`). The chart in `deploy/helm` has a Deployment with hard anti-affinity, a PDB, a NetworkPolicy that names the gateway and the consumer, an optional `ServiceMonitor` and `PrometheusRule`, and an optional HPA. The scaling signal is the open connection count, which needs a custom metrics adapter, so autoscaling is off by default. `make helm-lint` validates the rendered chart.
+One image from the `Dockerfile`, base images pinned by digest (`make pin-base-images`). The chart in `deploy/helm` has a Deployment with hard anti-affinity, a PDB, a NetworkPolicy that names the gateway and the consumer, an optional `ServiceMonitor` and `PrometheusRule`, an optional HPA, and one HTTPRoute with its own SecurityPolicy per exposed path: the ticket route merges with the Gateway's JWT and authorisation filter, the stream route replaces it because the ticket is its only credential. The scaling signal is the open connection count, which needs a custom metrics adapter, so autoscaling is off by default. `make helm-lint` validates the rendered chart and both policies.
 
 ## Observability
 

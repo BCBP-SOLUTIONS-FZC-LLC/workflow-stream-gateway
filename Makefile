@@ -38,7 +38,7 @@ COVER_THRESHOLD := 90
 # initialisation, which fail only when a platform library refuses its own identity.
 COVER_PKG_FLOORS := internal/observability:85
 
-.PHONY: test-integration merge-coverage helm-lint lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
+.PHONY: test-integration merge-coverage helm-lint helm-policy-check helm-namespace-check lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
         cover cover-func cover-html cover-check cover-check-pkg \
         tidy fmt-check fix check lint lint-fix arch-lint vuln \
         docker-build docker-lint docker-trivy docker-check smoke-test \
@@ -247,7 +247,41 @@ helm-lint:
 	@mkdir -p $(TOOLS_DIR)
 	$(HELM) template deploy/helm $(HELM_LINT_VALUES) > $(TOOLS_DIR)/helm-rendered.yaml
 	$(KUBECONFORM) -strict -skip PrometheusRule,ServiceMonitor,HTTPRoute,SecurityPolicy $(TOOLS_DIR)/helm-rendered.yaml
+	@$(MAKE) helm-policy-check
+	@$(MAKE) helm-namespace-check
 	@echo "✓ helm chart valid"
+
+## helm-namespace-check: The NetworkPolicy admits the platform's `gateway` namespace for the API and `observability` for the scrape
+helm-namespace-check:
+	@np="$$($(HELM) template x deploy/helm $(HELM_LINT_VALUES) -s templates/networkpolicy.yaml)"; \
+	for ns in gateway observability; do \
+		echo "$$np" | grep -q "kubernetes.io/metadata.name: $$ns$$" \
+			|| { echo "helm-namespace-check: the NetworkPolicy does not select the $$ns namespace"; exit 1; }; \
+	done; \
+	! echo "$$np" | grep -qE "kubernetes.io/metadata.name: (envoy-gateway-system|monitoring)$$" \
+		|| { echo "helm-namespace-check: the NetworkPolicy still selects a pre-rename namespace"; exit 1; }
+
+## helm-policy-check: The ticket route merges with the gateway's auth policy; the stream route replaces it (its ticket is the only credential)
+helm-policy-check:
+	@render() { $(HELM) template x deploy/helm $(HELM_LINT_VALUES) --set ingress.enabled=true --set ingress.gateway.name=gw \
+		--set ingress.securityPolicy.enabled=true --set ingress.securityPolicy.cors.enabled=true \
+		--set ingress.securityPolicy.cors.allowOrigins[0]=https://app.example.com "$$@"; }; \
+	render -s templates/securitypolicy-tickets.yaml | grep -q "mergeType: StrategicMerge" \
+		|| { echo "helm-policy-check: the ticket route's policy must merge with the gateway's, or it loses JWT validation and the identity headers"; exit 1; }; \
+	render -s templates/securitypolicy-tickets.yaml | grep -q "name: workflow-stream-gateway-tickets" \
+		|| { echo "helm-policy-check: the ticket policy must target the ticket route"; exit 1; }; \
+	render -s templates/securitypolicy.yaml | grep -q "name: workflow-stream-gateway-stream" \
+		|| { echo "helm-policy-check: the stream policy must target the stream route"; exit 1; }; \
+	! render -s templates/securitypolicy.yaml | grep -q "mergeType" \
+		|| { echo "helm-policy-check: the stream route's policy must replace the gateway's; the ticket is its only credential"; exit 1; }; \
+	$(HELM) template x deploy/helm $(HELM_LINT_VALUES) --set ingress.enabled=true --set ingress.gateway.name=gw -s templates/securitypolicy.yaml | grep -q "name: workflow-stream-gateway-stream" \
+		|| { echo "helm-policy-check: the stream route's policy must render whenever the route is exposed, with or without CORS; without it the route stays behind the gateway's JWT and every browser connection is refused"; exit 1; }; \
+	render -s templates/httproute.yaml | awk '/^kind: HTTPRoute/{n++} /request: 0s/{if (n==2) f=1} END{exit !f}' \
+		|| { echo "helm-policy-check: the stream route must set timeouts.request 0s, or the gateway's default 15s request timeout cuts every stream"; exit 1; }; \
+	[ "$$(render -s templates/httproute.yaml | grep -c 'request: 0s')" = 1 ] \
+		|| { echo "helm-policy-check: only the stream route may disable its request timeout"; exit 1; }; \
+	[ "$$(render -s templates/httproute.yaml | grep -c '^kind: HTTPRoute')" = 2 ] \
+		|| { echo "helm-policy-check: the ticket and stream paths need separate routes so each carries its own policy"; exit 1; }
 
 ## pin-base-images: Resolve current digests for the Dockerfile base images and pin them
 pin-base-images:
@@ -275,6 +309,7 @@ docker-build:
 ## docker-lint: Lint the Dockerfile with hadolint
 docker-lint:
 	$(HADOLINT) --config .hadolint.yaml Dockerfile
+	@scripts/dockerfile-credentials-check.sh
 
 ## docker-trivy: Scan source and dependencies for HIGH/CRITICAL CVEs
 docker-trivy:

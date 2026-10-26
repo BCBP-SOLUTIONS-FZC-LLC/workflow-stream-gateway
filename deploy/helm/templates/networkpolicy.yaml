@@ -24,8 +24,7 @@ spec:
   ingress:
     # Allow API traffic from the ingress controller / gateway namespace.
     # Envoy Gateway: data-plane Envoy proxy pods run in the same namespace
-    # as the Gateway resource (not envoy-gateway-system, the control
-    # plane) — set ingressControllerNamespaceSelector to that namespace's
+    # as the Gateway resource, the platform `gateway` namespace — set ingressControllerNamespaceSelector to that namespace's
     # label and ingressControllerPodSelector to the Envoy pod labels.
     - from:
         - namespaceSelector:
@@ -54,7 +53,7 @@ spec:
         - port: {{ .Values.service.port }}
           protocol: TCP
 
-    # Allow Prometheus to scrape /metrics — restricted to the monitoring
+    # Allow Prometheus to scrape /metrics — restricted to the observability
     # namespace. Metrics live on a SEPARATE port from the API, so this
     # rule (unlike the two above) does not grant any API access.
     {{- if .Values.networkPolicy.metricsIngress.enabled }}
