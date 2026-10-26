@@ -207,6 +207,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TicketMintResponse'
+        "401":
+          description: The gateway identity headers are missing; only a request that bypassed the gateway lacks them.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         "413":
           description: Request body larger than 10 MiB. Non-retryable.
           content:

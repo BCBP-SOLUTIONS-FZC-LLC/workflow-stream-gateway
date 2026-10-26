@@ -1,6 +1,8 @@
 package http
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"sort"
@@ -79,4 +81,16 @@ func TestAsyncAPIMessagesMatchKnownEventTypes(t *testing.T) {
 	known := append([]string(nil), usecase.KnownEventTypes()...)
 	sort.Strings(known)
 	assert.Equal(t, known, documented, "api/asyncapi.yaml must document exactly the event types the service routes")
+}
+
+func TestTicketMintDocumentsTheStatusItAnswersWithoutIdentityHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	NewRouter(testRouterConfig()).ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil))
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+
+	doc, err := openapi3.NewLoader().LoadFromFile(openAPISpec)
+	require.NoError(t, err)
+	op := doc.Paths.Find("/api/v1/stream/tickets").Post
+	assert.NotNil(t, op.Responses.Status(w.Code), "the ticket mint answers %d without the gateway identity headers; docs/swagger/openapi.yaml must document it", w.Code)
 }
