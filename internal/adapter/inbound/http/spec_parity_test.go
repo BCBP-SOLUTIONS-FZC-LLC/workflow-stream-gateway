@@ -22,8 +22,6 @@ const (
 	asyncAPISpec = "../../../../api/asyncapi.yaml"
 )
 
-var operationalRoutes = map[string]bool{"/healthz": true, "/readyz": true}
-
 func specOperations(t *testing.T) []string {
 	t.Helper()
 	doc, err := openapi3.NewLoader().LoadFromFile(openAPISpec)
@@ -31,9 +29,6 @@ func specOperations(t *testing.T) []string {
 	param := regexp.MustCompile(`\{([^}]+)\}`)
 	var ops []string
 	for p, item := range doc.Paths.Map() {
-		if operationalRoutes[p] {
-			continue
-		}
 		for method := range item.Operations() {
 			ops = append(ops, method+" "+param.ReplaceAllString(p, ":$1"))
 		}
@@ -47,9 +42,6 @@ func routerOperations() []string {
 	gin.SetMode(gin.TestMode)
 	var ops []string
 	for _, r := range NewRouter(testRouterConfig()).Routes() {
-		if operationalRoutes[r.Path] {
-			continue
-		}
 		ops = append(ops, r.Method+" "+r.Path)
 	}
 	sort.Strings(ops)
