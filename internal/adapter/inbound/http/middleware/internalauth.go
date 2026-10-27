@@ -35,7 +35,7 @@ func RequireInternalToken(token string) gin.HandlerFunc {
 				Status:    http.StatusUnauthorized,
 				Detail:    "missing or invalid x-internal-token header",
 				Instance:  c.Request.URL.Path,
-				Code:      "UNAUTHORIZED",
+				Code:      "unauthorized",
 				TraceID:   c.Writer.Header().Get("X-Trace-ID"),
 				RequestID: c.Writer.Header().Get("X-Request-ID"),
 			})

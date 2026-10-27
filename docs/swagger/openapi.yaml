@@ -123,7 +123,7 @@ components:
           example: "/api/v1/stream"
         code:
           type: string
-          example: "UNAUTHORIZED"
+          example: "unauthorized"
         trace_id:
           type: string
           description: The trace id, equal to the X-Trace-ID response header.

@@ -54,6 +54,9 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	internalGroup.POST("/events", cfg.EventsHandler.Ingest)
 
 	r.GET("/api/v1/stream", cfg.StreamHandler.Stream)
+	r.NoRoute(func(c *gin.Context) {
+		writeProblem(c, http.StatusNotFound, "not-found", "no route matches "+c.Request.Method+" "+c.Request.URL.Path)
+	})
 
 	return r
 }
