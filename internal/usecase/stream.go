@@ -135,12 +135,12 @@ func (s *StreamService) Serve(ctx context.Context, ticket domain.Ticket, lastEve
 
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // the client closing the stream ends it normally
 		}
 		newFrames, err := s.store.ReadNew(ctx, targets, s.heartbeatInterval)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil
+				return nil //nolint:nilerr // a read cut short by the client closing the stream ends it normally
 			}
 			return err
 		}

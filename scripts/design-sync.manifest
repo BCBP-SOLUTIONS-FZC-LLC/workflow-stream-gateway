@@ -1,0 +1,4 @@
+# <kind> <repo path> <design path>; see scripts/design-sync-check.sh
+lld docs/lld/workflow_stream_gateway.md LLD/workflow_stream_gateway.md
+raw api/asyncapi.yaml LLD/workflow_stream_gateway_asyncapi.yaml
+raw docs/swagger/openapi.yaml LLD/workflow_stream_gateway_openapi.yaml
