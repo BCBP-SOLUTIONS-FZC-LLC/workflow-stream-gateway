@@ -31,6 +31,7 @@
 | 1.8 | 2026-09-22 | §3.2's handler-behaviour step 2 said "12 known wire types" where §3.1's const block, `internal/usecase/fanout.go` and this document's own rev 1.7 row and §3.2 filter-policy note all carry 11. Corrected to 11. **Appendix B** gains the four items the body already pointed at it for and it did not carry (three infrastructure-provisioning items in one entry, plus producer onboarding): the `wf-workflow-dash-q` filter policy (§3.2), the ingress idle-timeout the heartbeat interval is provisional against (§7, §11, §12), replica/HPA/drain behaviour (§10.3), and `tender.events`/`notification.events` onboarding (§1). |
 | 1.9 | 2026-10-09 | **Platform observability standard and connection-counter hardening** (§4, §11, §12, §13). Metrics are built through `platform-gincommon` and named `workflow_stream_gateway_*`, replacing the `sse_*` names; the chart gains alert rules and the `OTEL_*` settings. `APP_ENV` is validated against `local`, `dev`, `test`, `staging`, `prod`, the internal token is required outside dev and local, and a malformed value fails startup. The ticket and internal routes cap request bodies at 10 MiB. The connection counter is refreshed while a connection is open and released without going negative; before this a connection open longer than the counter lifetime dropped out of the cap and a stray release raised it. `api/asyncapi.yaml` documents the 11 consumed event types. |
 | 1.10 | 2026-10-26 | **The route carve-out lives in this service's chart** (§5.2, §10.3, Appendix A Decision 3, Appendix B). `GET /api/v1/stream` and `POST /api/v1/stream/tickets` are separate HTTPRoutes, each with its own SecurityPolicy. The ticket policy merges with the Gateway's JWT and authorisation filter. The stream policy sets no merge type, so it replaces the Gateway policy for that route and removes both filters there. One policy for both paths, as the chart held before, would have removed JWT validation and the identity headers from the ticket route as well. The stream policy renders whenever the routes are exposed, with CORS only when `securityPolicy.enabled` and `cors.enabled` are set, so a same-origin deployment keeps the carve-out; the ticket policy exists to add CORS and renders with those two settings. The platform's confirmation that a service chart may replace the Gateway policy on a route is the one open item. |
+| 1.11 | 2026-10-27 | **The standardization pass the other Workflow services had** (§5.4, §11, §13). Every problem document carries `trace_id` and `request_id`, equal to the `X-Trace-ID` and `X-Request-ID` response headers; a path no route matches answers a `not-found` problem instead of plain text, and the internal-token refusal uses the lowercase `unauthorized` code like every other refusal. §5.4 states the error shape and the refusals the platform middleware writes in its own envelope. Every alert carries a `runbook` annotation naming its entry in the runbooks. The eight defect-class linters run (`bodyclose`, `noctx`, `nilerr`, `gosec`, `contextcheck`, `gocritic`, `nolintlint`, `sqlclosecheck`), and `make design-sync-check` keeps this LLD and both specs equal to their design copies. |
 
 ---
 
@@ -242,6 +243,12 @@ The actual SSE endpoint. Carved out of the standard gateway JWT-validation/`ext_
 
 Specified in full in §3.2.
 
+### 5.4 Errors
+
+Every refusal the service writes is an RFC 9457 problem document, `application/problem+json`, with `type`, `title`, `status`, `detail`, `instance` and `code`, plus `trace_id` and `request_id` equal to the `X-Trace-ID` and `X-Request-ID` response headers, so one failing request can be followed in the logs. Codes are lowercase and hyphenated: `unauthorized`, `rate-limited`, `connection-cap-exceeded`, `unavailable`, `malformed-envelope`, `invalid-payload`, `payload-too-large`, `ingest-failed`, and `not-found` for a path no route matches.
+
+Some refusals come from the shared platform middleware instead, in its own flat envelope `{error, status, trace_id, request_id}`: a recovered handler panic (`500`); a request on the ticket or internal ingest route that outlives its timeout (`503`); and, on `POST /api/v1/stream/tickets`, a gateway identity that is missing or ambiguous or carries invalid `x-tenant-roles` (`401`), or a request context that cannot be built for another reason (`400`).
+
 ---
 
 ## 6. Fan-Out Routing
@@ -402,7 +409,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 - `workflow_stream_gateway_internal_events_ingest_total{event_type, result}` (`result ∈ {ok, bad_payload, error}`)
 - `workflow_stream_gateway_frames_written_total{event_type}`
 
-`docs/observability/metric-registry.md` lists the series from a real scrape. The chart's `PrometheusRule` alerts on the absence of a healthy replica, a replica count below two, a sustained `5xx` rate, a handler panic, Valkey unavailability on the ticket and stream routes, sustained ingest errors, and clients hitting the per-user cap. Tracing exports over OTLP; `OTEL_EXPORTER_OTLP_ENDPOINT` unset or `none` disables export while trace and request ids keep working.
+`docs/observability/metric-registry.md` lists the series from a real scrape. The chart's `PrometheusRule` alerts on the absence of a healthy replica, a replica count below two, a sustained `5xx` rate, a handler panic, Valkey unavailability on the ticket and stream routes, sustained ingest errors, and clients hitting the per-user cap. Every alert carries a `runbook` annotation naming its entry in the service's runbooks, which say what the alert means and the first steps to take. Tracing exports over OTLP; `OTEL_EXPORTER_OTLP_ENDPOINT` unset or `none` disables export while trace and request ids keep working.
 
 **Heartbeat:** a `: keep-alive` comment frame every 15 seconds on every open connection (§7).
 
@@ -438,6 +445,9 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 - **Request size:** a body over 10 MiB on the ticket and internal ingest routes is rejected with `413`.
 - **Contracts:** the OpenAPI lists exactly the routes the router serves, and the AsyncAPI documents exactly the 11 event types the service routes.
 - **Fail-closed:** both ticket endpoints under a simulated Valkey outage return `503`, never a silent allow.
+- **Errors:** every refusal is a problem document carrying the response's correlation ids and the documented code, an unknown path included.
+- **Alerts:** each alert's `runbook` annotation names an entry the runbooks document.
+- **Static checks:** the eight defect-class linters run over the code and the build-tagged tests; this LLD and both specs are compared with their design copies.
 - **Load test:** connection-count ramp (not QPS) to whatever cap Appendix B's provisional numbers settle on, once real usage data exists.
 
 ---

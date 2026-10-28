@@ -15,6 +15,14 @@ linters:
     - misspell
     - unconvert
     - unparam
+    - bodyclose
+    - noctx
+    - nilerr
+    - gosec
+    - contextcheck
+    - gocritic
+    - nolintlint
+    - sqlclosecheck
   settings:
     revive:
       rules:
@@ -23,6 +31,16 @@ linters:
         - name: error-strings
         - name: error-naming
         - name: if-return
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        - hugeParam
+        - rangeValCopy
+    nolintlint:
+      require-explanation: true
+      require-specific: true
     wrapcheck:
       ignore-package-globs:
         - github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/*
@@ -32,6 +50,13 @@ linters:
         linters:
           - wrapcheck
           - unparam
+          - noctx
+          - gosec
+          - contextcheck
+      - path: ^test/
+        linters:
+          - noctx
+          - gosec
 
 formatters:
   enable:

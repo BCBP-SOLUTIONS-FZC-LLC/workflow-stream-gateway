@@ -149,7 +149,8 @@ Every series carries `domain` (`workflow`), `service` (`workflow-stream-gateway`
 | `make test` | Unit tests with the race detector |
 | `make test-integration` | Valkey adapters against a real container |
 | `make test-ci` | Both, with merged coverage |
-| `make check` | Format, lint, arch-lint, vet, metrics-lint, helm-lint, tests and the coverage gate |
+| `make check` | Format, lint, arch-lint, vet, metrics-lint, helm-lint, the design-sync script's test, tests and the coverage gate |
+| `make design-sync-check` | Compare the LLD and both specs with their design copies (`DESIGN_DIR=<design checkout>`) |
 | `make lint-workflows` / `make vuln` / `make docker-check` | Workflow lint, dependency vulnerabilities, Dockerfile lint and scan |
 | `make smoke-test` | Build the image and check it end to end against a real Valkey (needs `GO_PRIVATE_TOKEN`) |
 

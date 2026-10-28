@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -121,4 +122,53 @@ func TestNewRouter_InternalEvents_OversizedBodyIsRejectedWith413(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/internal/events", body))
 
 	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
+func TestNewRouter_AProblemCarriesTheCorrelationIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(testRouterConfig())
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/stream", nil))
+
+	assert.Equal(t, "application/problem+json", w.Header().Get("Content-Type"))
+	var problem struct {
+		TraceID   string `json:"trace_id"`
+		RequestID string `json:"request_id"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &problem))
+	assert.NotEmpty(t, problem.RequestID)
+	assert.Equal(t, w.Header().Get("X-Request-ID"), problem.RequestID)
+	assert.Equal(t, w.Header().Get("X-Trace-ID"), problem.TraceID)
+}
+
+func TestNewRouter_RefusalsAreProblemsWithTheGatewaysCodes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := testRouterConfig()
+	cfg.InternalAPIToken = "secret"
+	r := NewRouter(cfg)
+
+	for name, tc := range map[string]struct {
+		method, path string
+		status       int
+		code         string
+	}{
+		"an unknown path":                {http.MethodGet, "/api/v1/nothing-here", http.StatusNotFound, "not-found"},
+		"an internal call with no token": {http.MethodPost, "/api/v1/internal/events", http.StatusUnauthorized, "unauthorized"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+
+			assert.Equal(t, tc.status, w.Code)
+			assert.Equal(t, "application/problem+json", w.Header().Get("Content-Type"))
+			var problem struct {
+				Code      string `json:"code"`
+				RequestID string `json:"request_id"`
+			}
+			assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &problem))
+			assert.Equal(t, tc.code, problem.Code)
+			assert.Equal(t, w.Header().Get("X-Request-ID"), problem.RequestID)
+		})
+	}
 }

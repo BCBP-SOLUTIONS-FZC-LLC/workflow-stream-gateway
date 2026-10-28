@@ -10,6 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Added
 
+- Problem documents carry `trace_id` and `request_id`, equal to the `X-Trace-ID` and `X-Request-ID` response headers; the OpenAPI declares them (LLD rev 1.11).
+- A path no route matches answers a `not-found` problem document instead of plain text.
+- The eight defect-class linters run (`bodyclose`, `noctx`, `nilerr`, `gosec`, `contextcheck`, `gocritic`, `nolintlint`, `sqlclosecheck`), with build tags; two deliberate nil returns on a client closing its stream carry their reason.
+- Every alert carries a `runbook` annotation naming its entry in `docs/observability/runbooks.md`; a test holds each to a documented entry.
+- `make design-sync-check` (local, `DESIGN_DIR`) compares the LLD and both specs with their design copies; `make check` runs the script's own test.
 - `workflow_stream_gateway_*` collectors built through `platform-gincommon`, with the `platform_*` series from the platform libraries in every scrape; `make metrics-lint`, a generated `docs/observability/metric-registry.md` and a scrape test.
 - `api/asyncapi.yaml` documenting the 11 consumed event types, with tests that fail when the OpenAPI differs from the router or the AsyncAPI from the routed event types.
 - A 10 MiB request body limit on the ticket and internal ingest routes (`413`).
@@ -27,6 +32,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- The internal-token refusal's `code` is `unauthorized`, lowercase like every other refusal; it was `UNAUTHORIZED`.
 - The NetworkPolicy selects the platform namespaces `gateway` (Envoy Gateway data plane) and `observability` (Prometheus), the names IAM's charts use, in place of `envoy-gateway-system` and `monitoring`; `make helm-namespace-check` holds it.
 - `platform-events/v2` is `v2.2.1` (consumer-side dead-letter fixes, Go 1.26.10; no API change).
 - CI runs the three checks the organisation requires and this repository lacked: `Build image (cache)` (Dockerfile lint and image build), `Trivy CVE scan` and `Smoke tests` (`make smoke-test`: the image against a real Valkey, a ticket minted, a stream opened and an ingested event received on it).
