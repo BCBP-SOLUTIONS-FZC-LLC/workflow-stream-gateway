@@ -9,22 +9,30 @@ import (
 
 const (
 	eventTaskCreated        = "WorkflowTaskCreated"
+	eventTaskClaimed        = "WorkflowTaskClaimed"
 	eventTaskCompleted      = "WorkflowTaskCompleted"
 	eventTaskDeferred       = "WorkflowTaskDeferred"
 	eventTaskReassigned     = "WorkflowTaskReassigned"
+	eventTaskSuperseded     = "WorkflowTaskSuperseded"
+	eventTaskFailed         = "WorkflowTaskFailed"
 	eventTaskSLAWarning     = "WorkflowTaskSlaWarning"
 	eventTaskSLABreached    = "WorkflowTaskSlaBreached"
 	eventInstancePaused     = "WorkflowInstancePaused"
 	eventInstanceResumed    = "WorkflowInstanceResumed"
 	eventInstanceCancelled  = "WorkflowInstanceCancelled"
 	eventInstanceTerminated = "WorkflowInstanceTerminated"
+	eventInstanceDegraded   = "WorkflowInstanceDegraded"
+	eventInstanceFailed     = "WorkflowInstanceFailed"
 	eventInstanceFinished   = "WorkflowInstanceFinished"
 )
 
 var taskAssigneeEvents = map[string]bool{
 	eventTaskCreated:     true,
+	eventTaskClaimed:     true,
 	eventTaskCompleted:   true,
 	eventTaskDeferred:    true,
+	eventTaskSuperseded:  true,
+	eventTaskFailed:      true,
 	eventTaskSLAWarning:  true,
 	eventTaskSLABreached: true,
 }
@@ -34,13 +42,17 @@ var instanceEvents = map[string]bool{
 	eventInstanceResumed:    true,
 	eventInstanceCancelled:  true,
 	eventInstanceTerminated: true,
+	eventInstanceDegraded:   true,
+	eventInstanceFailed:     true,
 	eventInstanceFinished:   true,
 }
 
 func KnownEventTypes() []string {
 	return []string{
-		eventTaskCreated, eventTaskCompleted, eventTaskDeferred, eventTaskReassigned, eventTaskSLAWarning, eventTaskSLABreached,
-		eventInstancePaused, eventInstanceResumed, eventInstanceCancelled, eventInstanceTerminated, eventInstanceFinished,
+		eventTaskCreated, eventTaskClaimed, eventTaskCompleted, eventTaskDeferred, eventTaskReassigned,
+		eventTaskSuperseded, eventTaskFailed, eventTaskSLAWarning, eventTaskSLABreached,
+		eventInstancePaused, eventInstanceResumed, eventInstanceCancelled, eventInstanceTerminated,
+		eventInstanceDegraded, eventInstanceFailed, eventInstanceFinished,
 	}
 }
 

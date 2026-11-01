@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Added
 
+- The gateway renders sixteen Execution Service event types, up from eleven: `WorkflowTaskClaimed`, `WorkflowTaskSuperseded` and `WorkflowTaskFailed` fan out to their assignees and department, and `WorkflowInstanceDegraded` and `WorkflowInstanceFailed` go to the instance's starter. `WorkflowInstanceStarted` and `WorkflowInstanceForceRouted` stay unknown types (LLD rev 1.12).
 - Problem documents carry `trace_id` and `request_id`, equal to the `X-Trace-ID` and `X-Request-ID` response headers; the OpenAPI declares them (LLD rev 1.11).
 - A path no route matches answers a `not-found` problem document instead of plain text.
 - The eight defect-class linters run (`bodyclose`, `noctx`, `nilerr`, `gosec`, `contextcheck`, `gocritic`, `nolintlint`, `sqlclosecheck`), with build tags; two deliberate nil returns on a client closing its stream carry their reason.
