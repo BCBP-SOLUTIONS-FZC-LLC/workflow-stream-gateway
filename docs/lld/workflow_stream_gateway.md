@@ -10,8 +10,8 @@
 | Service | Workflow Stream Gateway (`workflow-stream-gateway`) |
 | Supersedes | `dashboard_stream_gateway.md` (proposal, rev 1.2) — see that document's own superseded banner |
 | Subsystem | Workflow Engine — real-time dashboard push |
-| Version | 1.10 |
-| Date | 2026-10-26 |
+| Version | 1.14 |
+| Date | 2026-11-03 |
 | Status | Approved |
 | Audience | Workflow Engine team, platform/infra |
 | Owner database | None — Valkey only (stateless service) |
@@ -34,6 +34,7 @@
 | 1.11 | 2026-10-27 | **The standardization pass the other Workflow services had** (§5.4, §11, §13). Every problem document carries `trace_id` and `request_id`, equal to the `X-Trace-ID` and `X-Request-ID` response headers; a path no route matches answers a `not-found` problem instead of plain text, and the internal-token refusal uses the lowercase `unauthorized` code like every other refusal. §5.4 states the error shape and the refusals the platform middleware writes in its own envelope. Every alert carries a `runbook` annotation naming its entry in the runbooks. The eight defect-class linters run (`bodyclose`, `noctx`, `nilerr`, `gosec`, `contextcheck`, `gocritic`, `nolintlint`, `sqlclosecheck`), and `make design-sync-check` keeps this LLD and both specs equal to their design copies. |
 | 1.12 | 2026-11-01 | **The gateway renders the Execution Service's full catalog** (§3.1, §3.2, §4, Appendix B). The gateway knew eleven of the 18 event types. `WorkflowTaskClaimed`, `WorkflowTaskSuperseded` and `WorkflowTaskFailed` fan out to their assignees and department like the other task events; `WorkflowInstanceDegraded` and `WorkflowInstanceFailed` go to `started_by_user_id`, which the Execution Service now adds to both. That makes sixteen. `WorkflowInstanceStarted` and `WorkflowInstanceForceRouted` are not consumed and stay unknown types, acknowledged and counted. |
 | 1.13 | 2026-11-01 | **The task and instance counts in §4 and §6 follow the sixteen types** (§4, §6.2, §6.3). The department stream, the tenant-wide write and the department tier still counted six task-scoped and five instance-scoped types; the gateway renders nine and seven. |
+| 1.14 | 2026-11-03 | **The header matches the revision history, and Execution's dedup table is named as built** (header, §9.2). The header still said version 1.10 of 2026-10-26. §9.2 said the Execution Service dedups through a `processed_event` table; it is the `platform-events` inbox table `processed_events`. |
 
 ---
 
@@ -342,7 +343,7 @@ data: {"id":"018f2c3e-6b1a-7c40-9e2f-...","type":"WorkflowTaskCompleted","source
 
 ### 9.2 Why no delivery-idempotency mechanism exists here, unlike every DB-backed `/internal/events` handler
 
-Execution's own `/internal/events` handler dedups via a Postgres `processed_event` table, because its handlers perform durable, non-idempotent-by-default writes (state transitions, side effects) that a redelivered envelope could double-apply. Definition carries no such table: both types it consumes converge on the same state when reprocessed (`definition_service.md` §2.3.1, §10.9). This service's only "write" is an `XADD` appending a self-describing fact to a stream a reducer folds in idempotently — a redelivered envelope produces, at worst, a harmless duplicate frame (§8). Building a `processed_event`-style dedup table here (which would also require this service to gain a Postgres dependency it otherwise has zero reason to carry) would add weight inconsistent with this component's deliberately thin scope. This is the same reasoning the superseded proposal already reached in its own §7 — restated here as the explicit reason §3's event_consumer-routing reversal introduces no new correctness requirement.
+Execution's own `/internal/events` handler dedups through the `platform-events` inbox table `processed_events`, because its handlers perform durable, non-idempotent-by-default writes (state transitions, side effects) that a redelivered envelope could double-apply. Definition carries no such table: both types it consumes converge on the same state when reprocessed (`definition_service.md` §2.3.1, §10.9). This service's only "write" is an `XADD` appending a self-describing fact to a stream a reducer folds in idempotently — a redelivered envelope produces, at worst, a harmless duplicate frame (§8). Building a `processed_event`-style dedup table here (which would also require this service to gain a Postgres dependency it otherwise has zero reason to carry) would add weight inconsistent with this component's deliberately thin scope. This is the same reasoning the superseded proposal already reached in its own §7 — restated here as the explicit reason §3's event_consumer-routing reversal introduces no new correctness requirement.
 
 ### 9.3 Abuse/resource-exhaustion controls
 

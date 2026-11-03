@@ -21,7 +21,7 @@ The pre-commit hook runs tidy, format, lint and arch-lint.
 
 - Dependency direction is `domain ← usecase ← adapter`; `make arch-lint` enforces it.
 - Non-test code carries no comments except `//go:` and `//nolint` directives.
-- Logs, metrics and traces go through `platform-gincommon`, and events through `platform-events`. New metrics are `workflow_stream_gateway_*` collectors built in `internal/observability`, and `make metrics-lint` must pass.
+- Logs, metrics and traces go through `platform-gincommon`, and events through `platform-events`. New metrics are `workflow_stream_gateway_*` collectors built in `internal/observability`, and `make metrics-lint` must pass. `make lint` enforces it: `database/sql`, `log`, `log/slog`, `zap`, the OpenTelemetry SDK and exporters and the Prometheus client (outside `internal/observability`) cannot be imported from non-test code, and pools and connections are built only through `pgcommon`.
 - A fix starts with a test of the correct behaviour that fails, then the change.
 - Never add a `replace` directive to `go.mod`.
 
