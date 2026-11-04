@@ -34,6 +34,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- CI: the coverage step runs `make cover-check-pkg`, so each package is held to its floor (it only printed the total before). The PR summary comment shows the total without a made-up limit.
 - The `PR summary` job posts the sticky pull request comment with the job results and the coverage figure (`.github/scripts/pr-summary.js`, as the other workflow repositories do); it only printed a line before. The test job uploads the merged coverage profile for it.
 - The LLD (revision 1.14) matches its own revision history in the header and names Execution's dedup table as the `platform-events` inbox table `processed_events`.
 - `make lint` forbids `database/sql`, `log`, `log/slog`, `zap`, the OpenTelemetry SDK and exporters and the Prometheus client outside `internal/observability`, plus direct pool and connection construction.
