@@ -10,6 +10,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Added
 
+- The LLD counts nine task-scoped and seven instance-scoped event types in its stream and fan-out sections, as the code does (LLD rev 1.13).
+- The gateway renders sixteen Execution Service event types, up from eleven: `WorkflowTaskClaimed`, `WorkflowTaskSuperseded` and `WorkflowTaskFailed` fan out to their assignees and department, and `WorkflowInstanceDegraded` and `WorkflowInstanceFailed` go to the instance's starter. `WorkflowInstanceStarted` and `WorkflowInstanceForceRouted` stay unknown types (LLD rev 1.12).
 - Problem documents carry `trace_id` and `request_id`, equal to the `X-Trace-ID` and `X-Request-ID` response headers; the OpenAPI declares them (LLD rev 1.11).
 - A path no route matches answers a `not-found` problem document instead of plain text.
 - The eight defect-class linters run (`bodyclose`, `noctx`, `nilerr`, `gosec`, `contextcheck`, `gocritic`, `nolintlint`, `sqlclosecheck`), with build tags; two deliberate nil returns on a client closing its stream carry their reason.
@@ -32,6 +34,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- CI: the coverage step runs `make cover-check-pkg`, so each package is held to its floor (it only printed the total before). The PR summary comment shows the total without a made-up limit.
+- The `PR summary` job posts the sticky pull request comment with the job results and the coverage figure (`.github/scripts/pr-summary.js`, as the other workflow repositories do); it only printed a line before. The test job uploads the merged coverage profile for it.
+- The LLD (revision 1.14) matches its own revision history in the header and names Execution's dedup table as the `platform-events` inbox table `processed_events`.
+- `make lint` forbids `database/sql`, `log`, `log/slog`, `zap`, the OpenTelemetry SDK and exporters and the Prometheus client outside `internal/observability`, plus direct pool and connection construction.
 - The internal-token refusal's `code` is `unauthorized`, lowercase like every other refusal; it was `UNAUTHORIZED`.
 - The NetworkPolicy selects the platform namespaces `gateway` (Envoy Gateway data plane) and `observability` (Prometheus), the names IAM's charts use, in place of `envoy-gateway-system` and `monitoring`; `make helm-namespace-check` holds it.
 - `platform-events/v2` is `v2.2.1` (consumer-side dead-letter fixes, Go 1.26.10; no API change).

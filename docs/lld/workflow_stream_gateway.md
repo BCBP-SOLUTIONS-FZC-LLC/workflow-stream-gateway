@@ -10,8 +10,8 @@
 | Service | Workflow Stream Gateway (`workflow-stream-gateway`) |
 | Supersedes | `dashboard_stream_gateway.md` (proposal, rev 1.2) — see that document's own superseded banner |
 | Subsystem | Workflow Engine — real-time dashboard push |
-| Version | 1.10 |
-| Date | 2026-10-26 |
+| Version | 1.14 |
+| Date | 2026-11-03 |
 | Status | Approved |
 | Audience | Workflow Engine team, platform/infra |
 | Owner database | None — Valkey only (stateless service) |
@@ -32,6 +32,9 @@
 | 1.9 | 2026-10-09 | **Platform observability standard and connection-counter hardening** (§4, §11, §12, §13). Metrics are built through `platform-gincommon` and named `workflow_stream_gateway_*`, replacing the `sse_*` names; the chart gains alert rules and the `OTEL_*` settings. `APP_ENV` is validated against `local`, `dev`, `test`, `staging`, `prod`, the internal token is required outside dev and local, and a malformed value fails startup. The ticket and internal routes cap request bodies at 10 MiB. The connection counter is refreshed while a connection is open and released without going negative; before this a connection open longer than the counter lifetime dropped out of the cap and a stray release raised it. `api/asyncapi.yaml` documents the 11 consumed event types. |
 | 1.10 | 2026-10-26 | **The route carve-out lives in this service's chart** (§5.2, §10.3, Appendix A Decision 3, Appendix B). `GET /api/v1/stream` and `POST /api/v1/stream/tickets` are separate HTTPRoutes, each with its own SecurityPolicy. The ticket policy merges with the Gateway's JWT and authorisation filter. The stream policy sets no merge type, so it replaces the Gateway policy for that route and removes both filters there. One policy for both paths, as the chart held before, would have removed JWT validation and the identity headers from the ticket route as well. The stream policy renders whenever the routes are exposed, with CORS only when `securityPolicy.enabled` and `cors.enabled` are set, so a same-origin deployment keeps the carve-out; the ticket policy exists to add CORS and renders with those two settings. The platform's confirmation that a service chart may replace the Gateway policy on a route is the one open item. |
 | 1.11 | 2026-10-27 | **The standardization pass the other Workflow services had** (§5.4, §11, §13). Every problem document carries `trace_id` and `request_id`, equal to the `X-Trace-ID` and `X-Request-ID` response headers; a path no route matches answers a `not-found` problem instead of plain text, and the internal-token refusal uses the lowercase `unauthorized` code like every other refusal. §5.4 states the error shape and the refusals the platform middleware writes in its own envelope. Every alert carries a `runbook` annotation naming its entry in the runbooks. The eight defect-class linters run (`bodyclose`, `noctx`, `nilerr`, `gosec`, `contextcheck`, `gocritic`, `nolintlint`, `sqlclosecheck`), and `make design-sync-check` keeps this LLD and both specs equal to their design copies. |
+| 1.12 | 2026-11-01 | **The gateway renders the Execution Service's full catalog** (§3.1, §3.2, §4, Appendix B). The gateway knew eleven of the 18 event types. `WorkflowTaskClaimed`, `WorkflowTaskSuperseded` and `WorkflowTaskFailed` fan out to their assignees and department like the other task events; `WorkflowInstanceDegraded` and `WorkflowInstanceFailed` go to `started_by_user_id`, which the Execution Service now adds to both. That makes sixteen. `WorkflowInstanceStarted` and `WorkflowInstanceForceRouted` are not consumed and stay unknown types, acknowledged and counted. |
+| 1.13 | 2026-11-01 | **The task and instance counts in §4 and §6 follow the sixteen types** (§4, §6.2, §6.3). The department stream, the tenant-wide write and the department tier still counted six task-scoped and five instance-scoped types; the gateway renders nine and seven. |
+| 1.14 | 2026-11-03 | **The header matches the revision history, and Execution's dedup table is named as built** (header, §9.2). The header still said version 1.10 of 2026-10-26. §9.2 said the Execution Service dedups through a `processed_event` table; it is the `platform-events` inbox table `processed_events`. |
 
 ---
 
@@ -138,36 +141,48 @@ queues:
     url: https://sqs.<region>.amazonaws.com/<account>/wf-workflow-dash-q
 routes:
   WorkflowTaskCreated: [workflow-stream-gateway]
+  WorkflowTaskClaimed: [workflow-stream-gateway]
   WorkflowTaskCompleted: [workflow-stream-gateway]
   WorkflowTaskDeferred: [workflow-stream-gateway]
   WorkflowTaskReassigned: [workflow-stream-gateway]
+  WorkflowTaskSuperseded: [workflow-stream-gateway]
+  WorkflowTaskFailed: [workflow-stream-gateway]
   WorkflowTaskSlaWarning: [workflow-stream-gateway]
   WorkflowTaskSlaBreached: [workflow-stream-gateway]
   WorkflowInstancePaused: [workflow-stream-gateway]
   WorkflowInstanceResumed: [workflow-stream-gateway]
   WorkflowInstanceCancelled: [workflow-stream-gateway]
   WorkflowInstanceTerminated: [workflow-stream-gateway]
+  WorkflowInstanceDegraded: [workflow-stream-gateway]
+  WorkflowInstanceFailed: [workflow-stream-gateway]
   WorkflowInstanceFinished: [workflow-stream-gateway]
+  WorkflowInstanceStarted: []
+  WorkflowInstanceForceRouted: []
 ```
 
-The `wf-workflow-dash-q` SNS subscription's own filter policy (on the `EventType` message attribute, scoped to exactly the 11 types above) is infra provisioning outside any application repo — tracked in Appendix B, not designed here.
+The `wf-workflow-dash-q` SNS subscription's own filter policy (on the `EventType` message attribute, scoped to exactly the 16 types above) is infra provisioning outside any application repo — tracked in Appendix B, not designed here.
 
-**`WorkflowInstanceStarted` is not consumed**: the creating client already knows synchronously."
+**`WorkflowInstanceStarted` and `WorkflowInstanceForceRouted` are not consumed.** The creating client already knows a start synchronously, and a force-route is an operator-facing event. The filter excludes both and the consumer's routes drop them if they ever arrive."
 
-**Consumed event payload reference.** All 11 types above are owned and registered by `workflow-execution-svc` — this service never re-derives or re-documents their field-level schemas, only what each means for dashboard push. The authoritative payload shape for each lives in `execution_service`'s own `api/asyncapi.yaml` (`components.messages.<Name>`, the same PascalCase name as the wire type itself); this table is the business-meaning layer on top, matching the convention `execution_service.md` §6.2 and `definition_service.md` §7.4 already use for their own consumed events, following IAM's own AsyncAPI second-layer-documentation convention (per-field description, not just wire shape).
+**Consumed event payload reference.** All 16 types above are owned and registered by `workflow-execution-svc` — this service never re-derives or re-documents their field-level schemas, only what each means for dashboard push. The authoritative payload shape for each lives in `execution_service`'s own `api/asyncapi.yaml` (`components.messages.<Name>`, the same PascalCase name as the wire type itself); this table is the business-meaning layer on top, matching the convention `execution_service.md` §6.2 and `definition_service.md` §7.4 already use for their own consumed events, following IAM's own AsyncAPI second-layer-documentation convention (per-field description, not just wire shape).
 
 | Wire type | Business meaning (for dashboard push) |
 | --- | --- |
 | `WorkflowTaskCreated` | A task was assigned; add it to the recipient's live list. |
+| `WorkflowTaskClaimed` | A multi-assignee task was claimed by its lead assignee; the other assignees see live that it is taken. |
 | `WorkflowTaskCompleted` | A task's stage transitioned (incl. a caller-agnostic Complete); reconcile any optimistic UI update. |
 | `WorkflowTaskDeferred` | A task regressed to an earlier node (stage-defer); tell the preparator it was sent back. |
 | `WorkflowTaskReassigned` | A task moved between assignees (admin reassign, node-override, or delegation reroute) — routes to both `old_user_id` (remove from list) and `new_user_id` (add to list), per §6. |
+| `WorkflowTaskSuperseded` | A task was bypassed by a force-forward and closed; remove it from the recipients' lists. |
+| `WorkflowTaskFailed` | A task failed, swept up by an instance cancel, terminate or failure or failed by its own connector stage; remove it from the recipients' lists. |
 | `WorkflowTaskSlaWarning` | A task's follow-up deadline elapsed unresolved; nudge the assignee. |
 | `WorkflowTaskSlaBreached` | A task's due-date elapsed unresolved; escalate. |
 | `WorkflowInstancePaused` | An instance paused (admin action, tenant-state dispatch, or OOO safety-net); reflect the paused state live. |
 | `WorkflowInstanceResumed` | An instance resumed (admin action, tenant-state dispatch, OOO-restored, or a DEGRADED instance's force-forward/force-back resolution). |
 | `WorkflowInstanceCancelled` | An instance was cancelled; every active task failed/vacated. |
 | `WorkflowInstanceTerminated` | An instance was terminated directly (admin action); its open tasks failed. |
+| `WorkflowInstanceDegraded` | A parallel branch failed unrecoverably and the instance is parked until an administrator acts; show that intervention is needed. |
+| `WorkflowInstanceFailed` | A main-path failure ended the instance; its open tasks failed. |
 | `WorkflowInstanceFinished` | An instance reached its BPMN terminal node cleanly. |
 
 ### 3.2 `POST /internal/events`
@@ -179,7 +194,7 @@ Identical contract shape to Execution Service's and Definition Service's own `/i
 - **Request body.** One `events.Envelope[json.RawMessage]` (`platform-events/v2/pkg/events`, the exact 13-field shape specified in §7 below), forwarded verbatim by `event_consumer`.
 - **Handler behavior.**
   1. Decode the envelope. A malformed body (unparseable JSON, or missing any of `id`/`type`/`source`/`time` — `events.ParseEnvelope`'s own validation) → `400`, non-retryable.
-  2. If `type` is not one of the 11 known wire types (§3.1) → log, count, `200` — the same forward-compatibility convention every other `/internal/events` handler in this platform uses (`execution_service.md` §6.1: "unknown event types are accepted and ignored with 200"), so an upstream team adding a new event type never breaks delivery here.
+  2. If `type` is not one of the 16 known wire types (§3.1) → log, count, `200` — the same forward-compatibility convention every other `/internal/events` handler in this platform uses (`execution_service.md` §6.1: "unknown event types are accepted and ignored with 200"), so an upstream team adding a new event type never breaks delivery here.
   3. Otherwise, resolve recipients per §6's fan-out rules and decode the typed payload for the matched event class.
   4. For each recipient, `XADD sse:events:<tenant_id>:<user_id>` (§4) the rendered SSE frame (§7).
   5. Respond `200` only once every `XADD` in step 4 has succeeded. A single Valkey write failure aborts the handler and responds `502` — transient, safe to retry. **A retry that re-delivers to recipients whose `XADD` already succeeded is harmless**: §8 already establishes duplicate SSE delivery as a no-op for an idempotent frontend reducer, and this service holds no dedup table of its own (§9.2 explains why one isn't needed, unlike Execution's/Definition's own `processed_event`-backed handlers).
@@ -193,8 +208,8 @@ Identical contract shape to Execution Service's and Definition Service's own `/i
 | --- | --- | --- | --- | --- |
 | `ssegw:ticket:<token>` | JSON: `{tenant_id, user_id, tenant_roles[], departments[{department_id, role}], plan, feature_flags[], issued_at}` — a snapshot of the caller's own gateway-injected headers at mint time, `x-departments`' `<department_id>:<role>` pairs parsed into structured entries (not left as raw strings) | 60s | `POST /api/v1/stream/tickets` | `GET /api/v1/stream` (ticket validation, and broadcast-eligibility computation, §6) |
 | `sse:events:<tenant_id>:<user_id>` | Personal Valkey Stream; each entry is one rendered SSE frame (§7), `XADD`ed with `MINID ~` trimming to a 10-minute retention window | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out (§3.2 step 4) | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill, §8) |
-| `sse:events:broadcast:<tenant_id>` | Tenant-wide Valkey Stream (§6) — every one of the 11 known event types, same trim/TTL shape as the personal key | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, unconditionally for every known event | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket whose `tenant_roles` includes `tenant_admin`/`tenant_owner` |
-| `sse:events:broadcast:<tenant_id>:<department_id>` | One department's Valkey Stream (§6) — the 6 task-scoped event types only, same trim/TTL shape | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, for task-scoped events whose payload `department_id` matches | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket holding any role in that department |
+| `sse:events:broadcast:<tenant_id>` | Tenant-wide Valkey Stream (§6) — every one of the 16 known event types, same trim/TTL shape as the personal key | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, unconditionally for every known event | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket whose `tenant_roles` includes `tenant_admin`/`tenant_owner` |
+| `sse:events:broadcast:<tenant_id>:<department_id>` | One department's Valkey Stream (§6) — the 9 task-scoped event types only, same trim/TTL shape | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, for task-scoped events whose payload `department_id` matches | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket holding any role in that department |
 | `sse:conncount:<tenant_id>:<user_id>` | Integer counter of currently-open SSE connections for this user | `EXPIRE` set on increment to a value longer than the ticket TTL and refreshed on every wake-up of the open connection, so a long-lived connection stays counted; release deletes the key at zero and never leaves it negative | `GET /api/v1/stream` on connect (increment) / disconnect (decrement) | `GET /api/v1/stream` on connect (cap check, §9.3) |
 | `sse:ticketrate:<tenant_id>:<user_id>` | Fixed-window counter, mint attempts in the current rolling minute | 60s, reset each window | `POST /api/v1/stream/tickets` | `POST /api/v1/stream/tickets` (rate check, §9.3) |
 
@@ -269,13 +284,13 @@ For each recipient, the `/internal/events` handler (§3.2) writes one entry into
 
 ### 6.2 Tenant-wide tier
 
-Every known event (all 6 task-scoped and all 5 instance-scoped types) is additionally written to `sse:events:broadcast:<tenant_id>` (§4), unconditionally — one extra `XADD` per ingested envelope, independent of how many personal recipients it had.
+Every known event (all 9 task-scoped and all 7 instance-scoped types) is additionally written to `sse:events:broadcast:<tenant_id>` (§4), unconditionally — one extra `XADD` per ingested envelope, independent of how many personal recipients it had.
 
 **Eligibility.** A `GET /api/v1/stream` connection also live-tails this stream iff the ticket's `tenant_roles` includes `tenant_admin` or `tenant_owner` — the exact role names `execution_service`'s own `isAdmin()`/`requireAdmin()` gate on (`internal/adapter/inbound/http/handler/handler.go:20-24`), not a bare `"admin"` string, since this platform has no platform-level "admin" role at all (`x-tenant-roles` is fully open-ended, syntax-validated only).
 
 ### 6.3 Department tier
 
-Task-scoped events only (the 6 types with an `assignee_user_ids[]`/`old_user_id`+`new_user_id` recipient field) are additionally written to `sse:events:broadcast:<tenant_id>:<department_id>` (§4), using the event payload's own `department_id` field (confirmed present in both the AsyncAPI schema and the actual emitted Go payload for all 6 types, `TaskScopedCore.DepartmentID`). **Instance-scoped events are never written to a department tier** — `workflow_instance` has no `department_id` at all in `execution_service`'s domain model, and a single instance's tasks can legitimately span multiple departments over its lifecycle; there is no well-defined "the instance's department" to key on.
+Task-scoped events only (the 9 types with an `assignee_user_ids[]`/`old_user_id`+`new_user_id` recipient field) are additionally written to `sse:events:broadcast:<tenant_id>:<department_id>` (§4), using the event payload's own `department_id` field (confirmed present in both the AsyncAPI schema and the actual emitted Go payload for all 9 types, `TaskScopedCore.DepartmentID`). **Instance-scoped events are never written to a department tier** — `workflow_instance` has no `department_id` at all in `execution_service`'s domain model, and a single instance's tasks can legitimately span multiple departments over its lifecycle; there is no well-defined "the instance's department" to key on.
 
 **Eligibility.** A connection live-tails one department's stream for every distinct `department_id` present in the ticket's parsed `x-departments` entries — **any role** in that department qualifies, not a privileged subset (the user's own framing: "complete for each role"). A ticket eligible for the tenant-wide tier (§6.2) does **not** also separately subscribe to its department tier(s) — the tenant-wide stream is already a superset, and subscribing to both would only produce duplicate frames.
 
@@ -328,7 +343,7 @@ data: {"id":"018f2c3e-6b1a-7c40-9e2f-...","type":"WorkflowTaskCompleted","source
 
 ### 9.2 Why no delivery-idempotency mechanism exists here, unlike every DB-backed `/internal/events` handler
 
-Execution's own `/internal/events` handler dedups via a Postgres `processed_event` table, because its handlers perform durable, non-idempotent-by-default writes (state transitions, side effects) that a redelivered envelope could double-apply. Definition carries no such table: both types it consumes converge on the same state when reprocessed (`definition_service.md` §2.3.1, §10.9). This service's only "write" is an `XADD` appending a self-describing fact to a stream a reducer folds in idempotently — a redelivered envelope produces, at worst, a harmless duplicate frame (§8). Building a `processed_event`-style dedup table here (which would also require this service to gain a Postgres dependency it otherwise has zero reason to carry) would add weight inconsistent with this component's deliberately thin scope. This is the same reasoning the superseded proposal already reached in its own §7 — restated here as the explicit reason §3's event_consumer-routing reversal introduces no new correctness requirement.
+Execution's own `/internal/events` handler dedups through the `platform-events` inbox table `processed_events`, because its handlers perform durable, non-idempotent-by-default writes (state transitions, side effects) that a redelivered envelope could double-apply. Definition carries no such table: both types it consumes converge on the same state when reprocessed (`definition_service.md` §2.3.1, §10.9). This service's only "write" is an `XADD` appending a self-describing fact to a stream a reducer folds in idempotently — a redelivered envelope produces, at worst, a harmless duplicate frame (§8). Building a `processed_event`-style dedup table here (which would also require this service to gain a Postgres dependency it otherwise has zero reason to carry) would add weight inconsistent with this component's deliberately thin scope. This is the same reasoning the superseded proposal already reached in its own §7 — restated here as the explicit reason §3's event_consumer-routing reversal introduces no new correctness requirement.
 
 ### 9.3 Abuse/resource-exhaustion controls
 
@@ -443,7 +458,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 - **Isolation:** a ticket minted for `(tenant A, user 1)` can never read `(tenant A, user 2)`'s or `(tenant B, user 1)`'s stream — construct a `GET /api/v1/stream` call attempting to pass a client-supplied `tenant_id`/`user_id` and assert it's ignored entirely (identity comes only from the ticket).
 - **Connection counter:** the cap holds under concurrent connects, a release never leaves the counter below zero, and an open connection refreshes the counter so it outlives its initial lifetime; verified against a real Valkey.
 - **Request size:** a body over 10 MiB on the ticket and internal ingest routes is rejected with `413`.
-- **Contracts:** the OpenAPI lists exactly the routes the router serves, and the AsyncAPI documents exactly the 11 event types the service routes.
+- **Contracts:** the OpenAPI lists exactly the routes the router serves, and the AsyncAPI documents exactly the 16 event types the service routes.
 - **Fail-closed:** both ticket endpoints under a simulated Valkey outage return `503`, never a silent allow.
 - **Errors:** every refusal is a problem document carrying the response's correlation ids and the documented code, an unknown path included.
 - **Alerts:** each alert's `runbook` annotation names an entry the runbooks document.
@@ -483,7 +498,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 - **Resolved 2026-08-24 — whether this service's generic event relay is sufficient for business-service-owned UI surfaces (e.g. Tender's own dashboard needs): yes.** Workflow's own UI (configuring workflows, viewing graphs, etc.) is a distinct surface from Tender's UI — this service was never meant to serve Tender's UI directly. Workflow sends its generic `WorkflowTask*`/`WorkflowInstance*` facts to Tender; Tender renders whatever its own UI needs from those facts. No bespoke per-consumer channel is required.
 - **Task-scoped broadcast beyond the department tier is deferred** — a genuine tenant-wide "every task event, not just instance events" firehose already exists for `tenant_admin`/`tenant_owner` (§6.2 already carries all types), but no additional broadcast shape beyond the two tiers built 2026-08-24 (tenant-wide, per-department) has been designed. Revisit if a real requirement emerges.
 - **Infrastructure provisioning this document references but does not design.** Three items the prose points here for, each owned outside any application repo:
-  - The `wf-workflow-dash-q` SNS subscription's filter policy on the `EventType` message attribute, scoped to exactly the 11 types of §3.1 (§3.2).
+  - The `wf-workflow-dash-q` SNS subscription's filter policy on the `EventType` message attribute, scoped to exactly the 16 types of §3.1 (§3.2).
   - The real ingress idle-timeout, against which this document's 15-second heartbeat is provisional (§7, §11, §12).
   - Replica count, HPA metric, and graceful-drain behaviour on rolling deploy — this service scales on open-connection count, not request QPS (§10.3).
 - **`tender.events`/`notification.events` onboarding** (§1) — real per the platform's topology, undesigned here: those producers' payload-shaping conventions need confirming with their owners before this service can route them.

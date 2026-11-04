@@ -65,10 +65,12 @@ func (f *fakeEventStore) AppendDepartmentEvent(_ context.Context, tenantID, depa
 
 func TestIsKnownEventType(t *testing.T) {
 	known := []string{
-		eventTaskCreated, eventTaskCompleted, eventTaskDeferred, eventTaskReassigned,
-		eventTaskSLAWarning, eventTaskSLABreached, eventInstancePaused,
-		eventInstanceResumed, eventInstanceCancelled, eventInstanceTerminated, eventInstanceFinished,
+		eventTaskCreated, eventTaskClaimed, eventTaskCompleted, eventTaskDeferred, eventTaskReassigned,
+		eventTaskSuperseded, eventTaskFailed, eventTaskSLAWarning, eventTaskSLABreached,
+		eventInstancePaused, eventInstanceResumed, eventInstanceCancelled, eventInstanceTerminated,
+		eventInstanceDegraded, eventInstanceFailed, eventInstanceFinished,
 	}
+	assert.Equal(t, known, KnownEventTypes())
 	for _, eventType := range known {
 		assert.True(t, IsKnownEventType(eventType), eventType)
 	}
@@ -282,4 +284,60 @@ func TestFanoutService_Ingest_AbortsOnDepartmentWriteFailure(t *testing.T) {
 	require.Len(t, store.appended, 1)
 	require.Len(t, store.broadcast, 1)
 	assert.Empty(t, store.department)
+}
+
+func TestFanoutService_Ingest_EveryRenderedEventReachesItsRecipients(t *testing.T) {
+	task := `{"assignee_user_ids":["u1","u2"],"department_id":"dept-a"}`
+	instance := `{"started_by_user_id":"starter-1"}`
+	for _, tc := range []struct {
+		eventType      string
+		payload        string
+		wantRecipients []string
+		wantDepartment bool
+	}{
+		{"WorkflowTaskCreated", task, []string{"u1", "u2"}, true},
+		{"WorkflowTaskClaimed", task, []string{"u1", "u2"}, true},
+		{"WorkflowTaskCompleted", task, []string{"u1", "u2"}, true},
+		{"WorkflowTaskDeferred", task, []string{"u1", "u2"}, true},
+		{"WorkflowTaskReassigned", `{"old_user_id":"old-1","new_user_id":"new-1","department_id":"dept-a"}`, []string{"old-1", "new-1"}, true},
+		{"WorkflowTaskSuperseded", task, []string{"u1", "u2"}, true},
+		{"WorkflowTaskFailed", task, []string{"u1", "u2"}, true},
+		{"WorkflowTaskSlaWarning", task, []string{"u1", "u2"}, true},
+		{"WorkflowTaskSlaBreached", task, []string{"u1", "u2"}, true},
+		{"WorkflowInstancePaused", instance, []string{"starter-1"}, false},
+		{"WorkflowInstanceResumed", instance, []string{"starter-1"}, false},
+		{"WorkflowInstanceCancelled", instance, []string{"starter-1"}, false},
+		{"WorkflowInstanceTerminated", instance, []string{"starter-1"}, false},
+		{"WorkflowInstanceDegraded", instance, []string{"starter-1"}, false},
+		{"WorkflowInstanceFailed", instance, []string{"starter-1"}, false},
+		{"WorkflowInstanceFinished", instance, []string{"starter-1"}, false},
+	} {
+		t.Run(tc.eventType, func(t *testing.T) {
+			store := &fakeEventStore{}
+
+			err := NewFanoutService(store).Ingest(context.Background(), IngestInput{
+				EventType: tc.eventType, TenantID: "tenant-a", Payload: []byte(tc.payload), RawEnvelope: []byte(`{}`),
+			})
+
+			require.NoError(t, err)
+			var got []string
+			for _, e := range store.appended {
+				assert.Equal(t, tc.eventType, e.eventType)
+				got = append(got, e.userID)
+			}
+			assert.Equal(t, tc.wantRecipients, got)
+			assert.Len(t, store.broadcast, 1, "every rendered event is written tenant-wide")
+			assert.Equal(t, tc.wantDepartment, len(store.department) == 1)
+		})
+	}
+}
+
+func TestFanoutService_Ingest_UnrenderedExecutionEventsAreUnknown(t *testing.T) {
+	for _, eventType := range []string{"WorkflowInstanceStarted", "WorkflowInstanceForceRouted"} {
+		assert.False(t, IsKnownEventType(eventType), eventType)
+		err := NewFanoutService(&fakeEventStore{}).Ingest(context.Background(), IngestInput{
+			EventType: eventType, TenantID: "tenant-a", Payload: []byte(`{}`), RawEnvelope: []byte(`{}`),
+		})
+		assert.ErrorIs(t, err, ErrUnknownEventType, eventType)
+	}
 }

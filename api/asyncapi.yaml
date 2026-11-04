@@ -20,15 +20,20 @@ channels:
           fifoQueue: false
     messages:
       WorkflowTaskCreated: { $ref: '#/components/messages/WorkflowTaskCreated' }
+      WorkflowTaskClaimed: { $ref: '#/components/messages/WorkflowTaskClaimed' }
       WorkflowTaskCompleted: { $ref: '#/components/messages/WorkflowTaskCompleted' }
       WorkflowTaskDeferred: { $ref: '#/components/messages/WorkflowTaskDeferred' }
       WorkflowTaskReassigned: { $ref: '#/components/messages/WorkflowTaskReassigned' }
+      WorkflowTaskSuperseded: { $ref: '#/components/messages/WorkflowTaskSuperseded' }
+      WorkflowTaskFailed: { $ref: '#/components/messages/WorkflowTaskFailed' }
       WorkflowTaskSlaWarning: { $ref: '#/components/messages/WorkflowTaskSlaWarning' }
       WorkflowTaskSlaBreached: { $ref: '#/components/messages/WorkflowTaskSlaBreached' }
       WorkflowInstancePaused: { $ref: '#/components/messages/WorkflowInstancePaused' }
       WorkflowInstanceResumed: { $ref: '#/components/messages/WorkflowInstanceResumed' }
       WorkflowInstanceCancelled: { $ref: '#/components/messages/WorkflowInstanceCancelled' }
       WorkflowInstanceTerminated: { $ref: '#/components/messages/WorkflowInstanceTerminated' }
+      WorkflowInstanceDegraded: { $ref: '#/components/messages/WorkflowInstanceDegraded' }
+      WorkflowInstanceFailed: { $ref: '#/components/messages/WorkflowInstanceFailed' }
       WorkflowInstanceFinished: { $ref: '#/components/messages/WorkflowInstanceFinished' }
 
 operations:
@@ -45,6 +50,12 @@ components:
   messages:
     WorkflowTaskCreated:
       name: WorkflowTaskCreated
+      x-lifecycle: { status: active }
+      description: A task-scoped event routed to the task's assignees and its department.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/TaskScopedPayload' }
+    WorkflowTaskClaimed:
+      name: WorkflowTaskClaimed
       x-lifecycle: { status: active }
       description: A task-scoped event routed to the task's assignees and its department.
       x-schema-owner: workflow-execution-service
@@ -67,6 +78,18 @@ components:
       description: A task reassignment routed to the old and new assignee and the department.
       x-schema-owner: workflow-execution-service
       payload: { $ref: '#/components/schemas/ReassignedPayload' }
+    WorkflowTaskSuperseded:
+      name: WorkflowTaskSuperseded
+      x-lifecycle: { status: active }
+      description: A task-scoped event routed to the task's assignees and its department.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/TaskScopedPayload' }
+    WorkflowTaskFailed:
+      name: WorkflowTaskFailed
+      x-lifecycle: { status: active }
+      description: A task-scoped event routed to the task's assignees and its department.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/TaskScopedPayload' }
     WorkflowTaskSlaWarning:
       name: WorkflowTaskSlaWarning
       x-lifecycle: { status: active }
@@ -99,6 +122,18 @@ components:
       payload: { $ref: '#/components/schemas/InstanceScopedPayload' }
     WorkflowInstanceTerminated:
       name: WorkflowInstanceTerminated
+      x-lifecycle: { status: active }
+      description: An instance-scoped event routed to the instance's starter.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/InstanceScopedPayload' }
+    WorkflowInstanceDegraded:
+      name: WorkflowInstanceDegraded
+      x-lifecycle: { status: active }
+      description: An instance-scoped event routed to the instance's starter.
+      x-schema-owner: workflow-execution-service
+      payload: { $ref: '#/components/schemas/InstanceScopedPayload' }
+    WorkflowInstanceFailed:
+      name: WorkflowInstanceFailed
       x-lifecycle: { status: active }
       description: An instance-scoped event routed to the instance's starter.
       x-schema-owner: workflow-execution-service

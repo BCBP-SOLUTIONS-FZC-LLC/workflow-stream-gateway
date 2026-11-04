@@ -54,4 +54,11 @@ jobs:
         run: make test-ci
 
       - name: Coverage threshold gate
-        run: make cover
+        run: make cover-check-pkg
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: .coverage/coverage.out
+          if-no-files-found: ignore
