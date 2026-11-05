@@ -8,8 +8,8 @@ github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.2.1 h1:rm9YNKkOuM5tNUz7x
 github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.2.1/go.mod h1:mXTSMp07tXlrhnKnHhj9wwdzLY7ft0xVFNgtEbnWdaE=
 github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.6.0 h1:Ndc1BpY/BOQxq7T4DlRZ3JRaQhlgYpzqIBG8eBst9rs=
 github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.6.0/go.mod h1:ayGo5mxluZ+JrXj7ZhZ7FHeWsklL4eEk4onO8LCYVpQ=
-github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.0 h1:3hYEwfzcLsnl6xNSBhLKE7U+VFqV7OvSJb47y4XBKIs=
-github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.0/go.mod h1:Cg8wnK+VglnJxBTZs2LWaOyZMMzZk83kVwci7KqqQyQ=
+github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.2 h1:vGlI8ytjCTySc9W6LNEMkGp6mqxmBQB9YM6T97PGRvA=
+github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.2/go.mod h1:Y7kwnvVdASCEYRtbsjC+/O5gYjOqJD2z3nDeXcF0JCU=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
 github.com/aws/aws-sdk-go-v2 v1.47.1 h1:uOIZnp4PK3ZhKI0dNrJrhTEsLxbpXHTAJlwoS1pvAtw=
