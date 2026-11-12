@@ -38,7 +38,7 @@ COVER_THRESHOLD := 90
 # initialisation, which fail only when a platform library refuses its own identity.
 COVER_PKG_FLOORS := internal/observability:85
 
-.PHONY: test-integration merge-coverage helm-lint helm-policy-check helm-namespace-check lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
+.PHONY: test-integration merge-coverage helm-lint helm-test helm-policy-check helm-namespace-check helm-authz-check lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
         cover cover-func cover-html cover-check cover-check-pkg \
         tidy fmt-check fix check lint lint-fix arch-lint vuln \
         docker-build docker-lint docker-trivy docker-check smoke-test \
@@ -239,7 +239,6 @@ lint-workflows:
 
 HELM_LINT_VALUES := --set env.VALKEY_ADDR=valkey:6379 \
 	  --set-string secretValues.VALKEY_PASSWORD=placeholder \
-	  --set-string secretValues.WORKFLOW_STREAM_GATEWAY_TOKEN=placeholder \
 	  --set prometheusRule.enabled=true
 
 ## helm-lint: Lint the Helm chart and validate its rendered manifests against the Kubernetes API schema
@@ -247,9 +246,11 @@ helm-lint:
 	$(HELM) lint deploy/helm $(HELM_LINT_VALUES)
 	@mkdir -p $(TOOLS_DIR)
 	$(HELM) template deploy/helm $(HELM_LINT_VALUES) > $(TOOLS_DIR)/helm-rendered.yaml
-	$(KUBECONFORM) -strict -skip PrometheusRule,ServiceMonitor,HTTPRoute,SecurityPolicy $(TOOLS_DIR)/helm-rendered.yaml
+	$(KUBECONFORM) -strict -skip PrometheusRule,ServiceMonitor,HTTPRoute,SecurityPolicy,AuthorizationPolicy $(TOOLS_DIR)/helm-rendered.yaml
 	@$(MAKE) helm-policy-check
 	@$(MAKE) helm-namespace-check
+	@$(MAKE) helm-authz-check
+	@$(MAKE) helm-test
 	@echo "✓ helm chart valid"
 
 ## helm-namespace-check: The NetworkPolicy admits the platform's `gateway` namespace for the API and `observability` for the scrape
@@ -283,6 +284,22 @@ helm-policy-check:
 		|| { echo "helm-policy-check: only the stream route may disable its request timeout"; exit 1; }; \
 	[ "$$(render -s templates/httproute.yaml | grep -c '^kind: HTTPRoute')" = 2 ] \
 		|| { echo "helm-policy-check: the ticket and stream paths need separate routes so each carries its own policy"; exit 1; }
+
+## helm-test: Decode the rendered policy and names and check them against the router (needs helm)
+helm-test:
+	go test -count=1 ./test/chart/...
+
+## helm-authz-check: The AuthorizationPolicy admits only the event consumer on the internal routes and renders only when enabled
+helm-authz-check:
+	@render() { $(HELM) template x deploy/helm $(HELM_LINT_VALUES) -s templates/authorizationpolicy.yaml "$$@"; }; \
+	render | grep -q 'sa/workflow-events-consumer' \
+		|| { echo "helm-authz-check: the AuthorizationPolicy does not name the event consumer on the internal routes"; exit 1; }; \
+	render | grep -q 'notPaths' \
+		|| { echo "helm-authz-check: the AuthorizationPolicy must admit every caller outside /api/v1/internal/*, or gateway traffic is refused"; exit 1; }; \
+	if render --set env.APP_ENV=dev --set authorizationPolicy.enabled=false > /dev/null 2>&1; then \
+		echo "helm-authz-check: authorizationPolicy.enabled=false still renders the AuthorizationPolicy"; exit 1; fi; \
+	if render --set authorizationPolicy.enabled=false > /dev/null 2>&1; then \
+		echo "helm-authz-check: a prod render with authorizationPolicy.enabled=false is not refused"; exit 1; fi
 
 ## pin-base-images: Resolve current digests for the Dockerfile base images and pin them
 pin-base-images:

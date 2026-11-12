@@ -31,12 +31,11 @@ func newRouter(cfg *config.Config, ginCfg gincommon.Config, client *redis.Client
 	streamHandler := sgHTTP.NewStreamHandler(streamService)
 
 	return sgHTTP.NewRouter(sgHTTP.RouterConfig{
-		GinConfig:        ginCfg,
-		AppEnv:           cfg.AppEnv,
-		InternalAPIToken: cfg.InternalAPIToken,
-		ValkeyClient:     client,
-		TicketHandler:    ticketHandler,
-		EventsHandler:    eventsHandler,
-		StreamHandler:    streamHandler,
+		GinConfig:     ginCfg,
+		AppEnv:        cfg.AppEnv,
+		ValkeyClient:  client,
+		TicketHandler: ticketHandler,
+		EventsHandler: eventsHandler,
+		StreamHandler: streamHandler,
 	})
 }

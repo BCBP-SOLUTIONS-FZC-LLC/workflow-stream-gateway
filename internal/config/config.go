@@ -25,8 +25,6 @@ type Config struct {
 	ValkeyReadTimeout  time.Duration
 	ValkeyWriteTimeout time.Duration
 
-	InternalAPIToken string
-
 	TicketTTL            time.Duration
 	TicketMintRateMax    int
 	TicketMintRateWindow time.Duration
@@ -73,8 +71,6 @@ func Load() (*Config, error) {
 		ValkeyReadTimeout:  envDuration("VALKEY_READ_TIMEOUT", 1*time.Second),
 		ValkeyWriteTimeout: envDuration("VALKEY_WRITE_TIMEOUT", 1*time.Second),
 
-		InternalAPIToken: getEnvOrDefault("WORKFLOW_STREAM_GATEWAY_TOKEN", ""),
-
 		TicketTTL:            envDuration("TICKET_TTL", 60*time.Second),
 		TicketMintRateMax:    envInt("TICKET_MINT_RATE_MAX", 10),
 		TicketMintRateWindow: envDuration("TICKET_MINT_RATE_WINDOW", 60*time.Second),
@@ -99,10 +95,6 @@ func Load() (*Config, error) {
 
 var appEnvs = []string{"local", "dev", "test", "staging", "prod"}
 
-func (c *Config) IsDev() bool {
-	return c.AppEnv == "dev" || c.AppEnv == "local"
-}
-
 func (c *Config) validate() error {
 	if !slices.Contains(appEnvs, c.AppEnv) {
 		return fmt.Errorf("APP_ENV must be one of %s", strings.Join(appEnvs, ", "))
@@ -112,9 +104,6 @@ func (c *Config) validate() error {
 	}
 	if c.MetricsPort < 1 || c.MetricsPort > 65535 {
 		return fmt.Errorf("METRICS_PORT must be in [1, 65535]")
-	}
-	if !c.IsDev() && c.InternalAPIToken == "" {
-		return fmt.Errorf("WORKFLOW_STREAM_GATEWAY_TOKEN is required outside dev and local")
 	}
 	if c.TicketTTL <= 0 {
 		return fmt.Errorf("TICKET_TTL must be > 0")

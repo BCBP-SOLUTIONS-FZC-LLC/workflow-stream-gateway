@@ -14,6 +14,8 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
+const unknownEventType = "unknown"
+
 type EventsHandler struct {
 	fanout *usecase.FanoutService
 }
@@ -25,7 +27,7 @@ func NewEventsHandler(fanout *usecase.FanoutService) *EventsHandler {
 func (h *EventsHandler) Ingest(c *gin.Context) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		recordEventIngest("unknown", "bad_payload")
+		recordEventIngest(unknownEventType, "bad_payload")
 		if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
 			writeProblem(c, http.StatusRequestEntityTooLarge, "payload-too-large", "request body exceeds the 10 MiB limit")
 			return
@@ -36,13 +38,13 @@ func (h *EventsHandler) Ingest(c *gin.Context) {
 
 	envelope, err := events.ParseEnvelope[json.RawMessage](body)
 	if err != nil {
-		recordEventIngest("unknown", "bad_payload")
+		recordEventIngest(unknownEventType, "bad_payload")
 		writeProblem(c, http.StatusBadRequest, "malformed-envelope", err.Error())
 		return
 	}
 
 	if !usecase.IsKnownEventType(envelope.Type) {
-		recordEventIngest(envelope.Type, "ok")
+		recordEventIngest(unknownEventType, "ok")
 		c.Status(http.StatusOK)
 		return
 	}
