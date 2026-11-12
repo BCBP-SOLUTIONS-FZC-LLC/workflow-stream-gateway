@@ -10,8 +10,8 @@
 | Service | Workflow Stream Gateway (`workflow-stream-gateway`) |
 | Supersedes | `dashboard_stream_gateway.md` (proposal, rev 1.2) — see that document's own superseded banner |
 | Subsystem | Workflow Engine — real-time dashboard push |
-| Version | 1.14 |
-| Date | 2026-11-03 |
+| Version | 1.16 |
+| Date | 2026-11-11 |
 | Status | Approved |
 | Audience | Workflow Engine team, platform/infra |
 | Owner database | None — Valkey only (stateless service) |
@@ -35,6 +35,8 @@
 | 1.12 | 2026-11-01 | **The gateway renders the Execution Service's full catalog** (§3.1, §3.2, §4, Appendix B). The gateway knew eleven of the 18 event types. `WorkflowTaskClaimed`, `WorkflowTaskSuperseded` and `WorkflowTaskFailed` fan out to their assignees and department like the other task events; `WorkflowInstanceDegraded` and `WorkflowInstanceFailed` go to `started_by_user_id`, which the Execution Service now adds to both. That makes sixteen. `WorkflowInstanceStarted` and `WorkflowInstanceForceRouted` are not consumed and stay unknown types, acknowledged and counted. |
 | 1.13 | 2026-11-01 | **The task and instance counts in §4 and §6 follow the sixteen types** (§4, §6.2, §6.3). The department stream, the tenant-wide write and the department tier still counted six task-scoped and five instance-scoped types; the gateway renders nine and seven. |
 | 1.14 | 2026-11-03 | **The header matches the revision history, and Execution's dedup table is named as built** (header, §9.2). The header still said version 1.10 of 2026-10-26. §9.2 said the Execution Service dedups through a `processed_event` table; it is the `platform-events` inbox table `processed_events`. |
+| 1.15 | 2026-11-11 | **The internal route admits the system caller identity and no shared token** (§2.1; §3.1; §3.2; §9.5; §10.1; §12; Appendix A). `/api/v1/internal/events` admits a request whose `x-tenant-roles` holds `iam-system` and whose `x-user-id` is set, and answers `401` otherwise; mesh identity, an authorization policy and the NetworkPolicy decide who can call. `WORKFLOW_STREAM_GATEWAY_TOKEN` no longer exists. |
+| 1.16 | 2026-11-11 | **One authorization rule per internal route, a render guard, the raw-path router and the metric labels** (§3.2; §5.4; §9.5; §11). The authorization policy holds one rule per internal route group: the route `POST /api/v1/internal/events`, named by its exact path, with the shared events consumer as its caller. The chart refuses to render with the policy off for `staging` and `prod` unless it is explicitly allowed. The policy needs a sidecar with mutual TLS, and `PeerAuthentication` is Platform's. The router matches the raw path and answers `404` for any path that contains an encoded slash. The `event_type` label of the ingest counter is a handled type or `unknown`. A new counter, `workflow_stream_gateway_internal_auth_rejected_total{reason}`, counts internal requests refused for a missing identity (`missing_user`, `missing_role`). |
 
 ---
 
@@ -80,7 +82,7 @@ flowchart LR
     EX["Execution Service<br/>outbox"] -->|SNS publish| TOPIC[("wf-workflow-events")]
     TOPIC -->|filtered subscription| Q[("wf-workflow-dash-q")]
     Q --> EC["event_consumer<br/>(shared Workflow-Events Consumer)"]
-    EC -->|POST /internal/events<br/>x-internal-token| GW["Workflow Stream Gateway<br/>cmd/server"]
+    EC -->|POST /api/v1/internal/events<br/>system caller identity| GW["Workflow Stream Gateway<br/>cmd/server"]
     GW -->|XADD| VK[("Valkey<br/>tickets, streams, counters")]
     Browser["Browser<br/>EventSource"] -->|"POST /api/v1/stream/tickets<br/>(gateway-authenticated)"| GW
     Browser -->|"GET /api/v1/stream?ticket=...<br/>(carved out of JWT chain)"| GW
@@ -135,7 +137,6 @@ This service runs **no SQS/SNS consumer of its own**. `event_consumer` — the s
 targets:
   - name: workflow-stream-gateway
     addr: http://workflow-stream-gateway.internal
-    tokenEnv: WORKFLOW_STREAM_GATEWAY_TOKEN
 queues:
   - name: dashboard
     url: https://sqs.<region>.amazonaws.com/<account>/wf-workflow-dash-q
@@ -189,8 +190,8 @@ The `wf-workflow-dash-q` SNS subscription's own filter policy (on the `EventType
 
 Identical contract shape to Execution Service's and Definition Service's own `/internal/events` endpoints (`execution_service.md` §6.1, `definition_service.md` §3.3.17) — this is a platform-wide convention, not reinvented here.
 
-- **Route.** `POST /internal/events`, under an `/internal` route group. **Not** exposed via the Envoy Gateway — no gateway identity headers ever reach it.
-- **Auth.** `RequireInternalToken` middleware (ported verbatim from `platform-gincommon`'s shared convention, matching `execution_service`'s `internal/adapter/inbound/http/middleware/internalauth.go`): compares the `x-internal-token` header against `WORKFLOW_STREAM_GATEWAY_TOKEN` using `crypto/subtle.ConstantTimeCompare`. Empty configured token disables the check (local/dev only; NetworkPolicy is the fallback control). A mismatch returns `401` with an RFC-9457 body (`type: https://errors.bcbp.io/workflow-stream-gateway/unauthorized`).
+- **Route.** `POST /api/v1/internal/events`, under the `/api/v1/internal` route group. **Not** exposed via the Envoy Gateway — no gateway identity headers ever reach it. The router matches the raw path and answers `404` for any path that contains an encoded slash, so an encoded slash is never read as part of the internal prefix.
+- **Auth.** A system caller identity check, the convention the IAM services use among themselves: the request must carry `x-tenant-roles` holding `iam-system` and an `x-user-id`. The headers are not a credential: mutual TLS in the mesh names the caller, and the authorization policy holds one rule per internal route group. The one group is the route `POST /api/v1/internal/events`, named by its exact path because a wildcard path never matches the prefix itself, and its caller is the shared events consumer (`workflow-app/workflow-events-consumer`). A route group with no caller has no rule and stays closed. The NetworkPolicy admits the events consumer as a pod. The policy needs a sidecar with mutual TLS on both ends, and the mesh-wide `PeerAuthentication` is Platform's. The chart refuses to render with the policy off for `staging` and `prod` unless it is explicitly allowed. A request without both identity headers returns `401` with an RFC-9457 body (`type: https://errors.bcbp.io/workflow-stream-gateway/unauthorized`).
 - **Request body.** One `events.Envelope[json.RawMessage]` (`platform-events/v2/pkg/events`, the exact 13-field shape specified in §7 below), forwarded verbatim by `event_consumer`.
 - **Handler behavior.**
   1. Decode the envelope. A malformed body (unparseable JSON, or missing any of `id`/`type`/`source`/`time` — `events.ParseEnvelope`'s own validation) → `400`, non-retryable.
@@ -260,7 +261,7 @@ Specified in full in §3.2.
 
 ### 5.4 Errors
 
-Every refusal the service writes is an RFC 9457 problem document, `application/problem+json`, with `type`, `title`, `status`, `detail`, `instance` and `code`, plus `trace_id` and `request_id` equal to the `X-Trace-ID` and `X-Request-ID` response headers, so one failing request can be followed in the logs. Codes are lowercase and hyphenated: `unauthorized`, `rate-limited`, `connection-cap-exceeded`, `unavailable`, `malformed-envelope`, `invalid-payload`, `payload-too-large`, `ingest-failed`, and `not-found` for a path no route matches.
+Every refusal the service writes is an RFC 9457 problem document, `application/problem+json`, with `type`, `title`, `status`, `detail`, `instance` and `code`, plus `trace_id` and `request_id` equal to the `X-Trace-ID` and `X-Request-ID` response headers, so one failing request can be followed in the logs. Codes are lowercase and hyphenated: `unauthorized`, `rate-limited`, `connection-cap-exceeded`, `unavailable`, `malformed-envelope`, `invalid-payload`, `payload-too-large`, `ingest-failed`, and `not-found` for a path no route matches and for any path that contains an encoded slash.
 
 Some refusals come from the shared platform middleware instead, in its own flat envelope `{error, status, trace_id, request_id}`: a recovered handler panic (`500`); a request on the ticket or internal ingest route that outlives its timeout (`503`); and, on `POST /api/v1/stream/tickets`, a gateway identity that is missing or ambiguous or carries invalid `x-tenant-roles` (`401`), or a request context that cannot be built for another reason (`400`).
 
@@ -355,7 +356,7 @@ Both `POST /api/v1/stream/tickets` and `GET /api/v1/stream`'s ticket validation 
 
 ### 9.5 `/internal/events` trust boundary
 
-Guarded by `x-internal-token` (§3.2), never reachable via the Envoy Gateway, and — per this session's platform-wide finding (`IAM/networkpolicy-header-trust-gap.md`, open, not resolved by this document) — same-namespace `NetworkPolicy` scoping for this route is a platform/IAM-owned question this service inherits identically to every other service with an `/internal/*` route group, not something this LLD resolves on its own.
+Guarded by the system caller identity check (§3.2) and never reachable via the Envoy Gateway. The chart ships an authorization policy with one rule per internal route group, which admits only the shared events consumer on this route, next to the `NetworkPolicy`; the chart refuses to render with the policy off for `staging` and `prod` unless it is explicitly allowed. The policy needs a sidecar with mutual TLS on both ends. Whether same-namespace `NetworkPolicy` scoping can be trusted for header-carried identity is a platform-wide question owned by Platform and IAM tracked by them; this service inherits the answer like every other service with an `/internal/*` route group.
 
 ---
 
@@ -383,7 +384,7 @@ workflow-stream-gateway/
 │   │   │       ├── ticket_handler.go
 │   │   │       ├── events_handler.go
 │   │   │       ├── stream_handler.go
-│   │   │       └── middleware/       # RequireInternalToken (§3.2)
+│   │   │       └── middleware/       # system caller identity check (§3.2)
 │   │   └── outbound/
 │   │       └── valkey/               # ticket store, streams, counters (go-redis/v9)
 │   └── config/
@@ -421,7 +422,8 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 - `workflow_stream_gateway_tickets_minted_total{result}` (`result ∈ {ok, rate_limited, valkey_unavailable}`)
 - `workflow_stream_gateway_connections_open` (Gauge): the open-connection count, the scaling signal (§10.2)
 - `workflow_stream_gateway_connections_rejected_total{reason}` (`reason ∈ {cap_exceeded, invalid_ticket, valkey_unavailable}`)
-- `workflow_stream_gateway_internal_events_ingest_total{event_type, result}` (`result ∈ {ok, bad_payload, error}`)
+- `workflow_stream_gateway_internal_events_ingest_total{event_type, result}` (`result ∈ {ok, bad_payload, error}`); `event_type` is a handled type or `unknown`, so a caller cannot create a series per value
+- `workflow_stream_gateway_internal_auth_rejected_total{reason}` (`reason ∈ {missing_user, missing_role}`): internal-route requests refused for a missing system caller identity
 - `workflow_stream_gateway_frames_written_total{event_type}`
 
 `docs/observability/metric-registry.md` lists the series from a real scrape. The chart's `PrometheusRule` alerts on the absence of a healthy replica, a replica count below two, a sustained `5xx` rate, a handler panic, Valkey unavailability on the ticket and stream routes, sustained ingest errors, and clients hitting the per-user cap. Every alert carries a `runbook` annotation naming its entry in the service's runbooks, which say what the alert means and the first steps to take. Tracing exports over OTLP; `OTEL_EXPORTER_OTLP_ENDPOINT` unset or `none` disables export while trace and request ids keep working.
@@ -442,7 +444,6 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 | Ticket-mint rate | 10 mints/minute per `(tenant_id, user_id)` | §9.3 — provisional |
 | Heartbeat interval | 15s | §7, §11 — provisional pending real ingress idle-timeout confirmation (Appendix B) |
 | `APP_ENV` | `dev` | One of `local`, `dev`, `test`, `staging`, `prod`; any other value fails startup |
-| `WORKFLOW_STREAM_GATEWAY_TOKEN` | required outside `dev` and `local` | `/internal/events` auth (§3.2) |
 | `OTEL_SERVICE_NAME` | `workflow-stream-gateway` | The `service` metric label and trace service name |
 | Malformed values | startup fails | A number or duration that does not parse is an error, never a silent default |
 | `VALKEY_ADDR` / `VALKEY_PASSWORD` / `VALKEY_DIAL_TIMEOUT` / `VALKEY_READ_TIMEOUT` / `VALKEY_WRITE_TIMEOUT` | matches `event_consumer`'s own env-var naming | platform-wide Valkey client convention |
@@ -471,7 +472,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 
 | # | Decision | Rationale |
 | --- | --- | --- |
-| 1 | Event ingestion routes through `event_consumer` via a standard `POST /internal/events` handler; this service runs no SQS/SNS consumer of its own | Reversed from the superseded proposal. Verified against `event_consumer`'s actual code: `Target.forward()` does a plain `POST <addr>/internal/events` + `x-internal-token`, identical in shape to every other `/internal/events` handler in this platform; `config/topology.yaml` documents onboarding a new target as config-only, no code change. The proposal's stated reason for rejecting this ("no idempotent-DB-ingest need to justify the extra hop") doesn't hold: this service needs no idempotency guarantee either way (Decision 9 below), so there's no requirement the shared consumer's model fails to satisfy. Removes an entire component (SQS/SNS client, receive/retry/DLQ logic) from this service's scope. |
+| 1 | Event ingestion routes through `event_consumer` via a standard `POST /internal/events` handler; this service runs no SQS/SNS consumer of its own | Reversed from the superseded proposal. Verified against `event_consumer`'s actual code: `event_consumer` sends each event as a plain `POST <addr>/api/v1/internal/events` with the system caller identity, the same shape every other internal events handler receives; `config/topology.yaml` documents onboarding a new target as config-only, no code change. The proposal's stated reason for rejecting this ("no idempotent-DB-ingest need to justify the extra hop") doesn't hold: this service needs no idempotency guarantee either way (Decision 9 below), so there's no requirement the shared consumer's model fails to satisfy. Removes an entire component (SQS/SNS client, receive/retry/DLQ logic) from this service's scope. |
 | 2 | SSE auth: short-lived (60s), reusable-within-TTL, opaque Valkey ticket minted via an authenticated REST call, passed as `?ticket=` on `GET /api/v1/stream` | Solves `EventSource`'s no-custom-headers limitation without a new session-cookie mechanism; reusability preserves native browser reconnect on brief blips. Carried from the superseded proposal, unaffected by Decision 1. |
 | 3 | `GET /api/v1/stream` is carved out of the standard gateway JWT-validation chain by this service's own route policy; this service validates the ticket itself | The carve-out lives with the service that implements the replacement authentication, as every Workflow service owns its own route policy (§10.3). No `Authorization` header will ever reach this route — the same class of exception `/internal/events` routes already establish, for a different reason (browser-unauthenticatable vs. machine-to-machine). |
 | 4 | Ticket-store lookups fail closed (`503`) on Valkey unavailability | Auth-critical, unlike the fail-open compiled-plan-cache precedent elsewhere in this platform. |

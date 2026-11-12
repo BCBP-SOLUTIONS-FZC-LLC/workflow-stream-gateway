@@ -40,8 +40,8 @@ spec:
           protocol: TCP
 
     # Allow event_consumer specifically — the only same-namespace caller,
-    # for POST /api/v1/internal/events (its own x-internal-token is the
-    # application-layer guard; this is the network-layer one). If
+    # for POST /api/v1/internal/events (the mesh AuthorizationPolicy names
+    # the calling service account; this is the network-layer guard). If
     # event_consumer runs in a different namespace than this release, add
     # a scoped rule via networkPolicy.additionalIngressRules instead of
     # widening this one.

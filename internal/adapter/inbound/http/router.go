@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,9 +16,8 @@ import (
 const shortRequestTimeout = 30 * time.Second
 
 type RouterConfig struct {
-	GinConfig        gincommon.Config
-	AppEnv           string
-	InternalAPIToken string
+	GinConfig gincommon.Config
+	AppEnv    string
 
 	ValkeyClient *redis.Client
 
@@ -32,9 +32,12 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	}
 
 	r := gin.New()
+	r.UseRawPath = true
+	r.UnescapePathValues = true
 	for _, mw := range gincommon.ObservabilityMiddlewares(cfg.GinConfig) {
 		r.Use(mw)
 	}
+	r.Use(refuseEncodedSlash)
 
 	r.GET("/healthz", gincommon.HealthHandler())
 	r.GET("/readyz", readyzHandler(cfg.ValkeyClient))
@@ -50,15 +53,25 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 	internalGroup := r.Group("/api/v1/internal")
 	internalGroup.Use(gincommon.TimeoutMiddleware(shortRequestTimeout))
 	internalGroup.Use(middleware.LimitRequestBody())
-	internalGroup.Use(middleware.RequireInternalToken(cfg.InternalAPIToken))
+	internalGroup.Use(middleware.RequireSystemCaller())
 	internalGroup.POST("/events", cfg.EventsHandler.Ingest)
 
 	r.GET("/api/v1/stream", cfg.StreamHandler.Stream)
-	r.NoRoute(func(c *gin.Context) {
-		writeProblem(c, http.StatusNotFound, "not-found", "no route matches "+c.Request.Method+" "+c.Request.URL.Path)
-	})
+	r.NoRoute(notFound)
 
 	return r
+}
+
+func notFound(c *gin.Context) {
+	writeProblem(c, http.StatusNotFound, "not-found", "no route matches "+c.Request.Method+" "+c.Request.URL.Path)
+}
+
+func refuseEncodedSlash(c *gin.Context) {
+	if strings.Contains(strings.ToLower(c.Request.URL.RawPath), "%2f") {
+		notFound(c)
+		return
+	}
+	c.Next()
 }
 
 func readyzHandler(client *redis.Client) gin.HandlerFunc {

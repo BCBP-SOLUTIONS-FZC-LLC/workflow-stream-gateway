@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Added
 
+- A request the internal-route caller check refuses is counted in `workflow_stream_gateway_internal_auth_rejected_total{reason}` (`missing_user` or `missing_role`). The caller identity `iam-system` is one constant (`domain.SystemCaller`). A test holds that a ticket mint with the gateway identity and no `iam-system` role still succeeds.
 - The LLD counts nine task-scoped and seven instance-scoped event types in its stream and fan-out sections, as the code does (LLD rev 1.13).
 - The gateway renders sixteen Execution Service event types, up from eleven: `WorkflowTaskClaimed`, `WorkflowTaskSuperseded` and `WorkflowTaskFailed` fan out to their assignees and department, and `WorkflowInstanceDegraded` and `WorkflowInstanceFailed` go to the instance's starter. `WorkflowInstanceStarted` and `WorkflowInstanceForceRouted` stay unknown types (LLD rev 1.12).
 - Problem documents carry `trace_id` and `request_id`, equal to the `X-Trace-ID` and `X-Request-ID` response headers; the OpenAPI declares them (LLD rev 1.11).
@@ -26,6 +27,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Fixed
 
+- `workflow_stream_gateway_internal_events_ingest_total` labels an event type the service does not handle `unknown`; the raw type is request-controlled text and let a caller create a series per value.
+- The router matches the raw request path, as the mesh policy does, and answers `404` for a path with an encoded slash. Before, `/api/v1/internal%2Fevents` was routed as the internal route while the policy saw a path outside its internal rule.
 - The stream route's policy renders whenever the routes are exposed, with CORS only when `ingress.securityPolicy.cors.enabled`; it rendered only with CORS, so a same-origin deployment left the stream route behind the gateway's JWT and every `EventSource` got a 401. The stream route also sets `timeouts.request: 0s`, since the gateway's default 15 s request timeout ends a stream.
 - `docs/swagger/openapi.yaml` documents `GET /healthz` and `GET /readyz`, as Definition's and Execution's specs do, and the parity test compares them with the router instead of skipping them.
 - The Dockerfile left `~/.git-credentials`, with `GO_PRIVATE_TOKEN`, in a builder layer, and the release build exported that layer to a registry cache. The credential is written, used by `go mod download` and removed in one `RUN`, the release build no longer reads or exports a registry cache, and `make docker-lint` and the CI image job run `scripts/dockerfile-credentials-check.sh`. Builder caches of earlier releases held the token, so `GO_PRIVATE_TOKEN` needs rotating.
@@ -34,6 +37,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Docs only: the in-repo LLD, the AsyncAPI and the OpenAPI match the design repository again. No code changed.
+- Chart: per-route caller rules (`authorizationPolicy.internalRoutes` replaces `internalCallers`; the `events` group names the exact path `/api/v1/internal/events`), the render refuses a disabled policy in staging and prod unless `authorizationPolicy.allowDisabled`, `NOTES.txt` states the sidecar and mutual TLS requirement, `appProtocol: http` on the Service ports, and `make helm-lint` runs chart tests that decode the rendered policy, check the ServiceAccount name for any release name and walk the chart for the retired token.
+- The internal route admits the system caller identity (`x-tenant-roles` holds `iam-system` and `x-user-id` is set) instead of the shared `x-internal-token`: `WORKFLOW_STREAM_GATEWAY_TOKEN` is removed (setting, startup requirement, chart secret key, compose, smoke test), the chart ships an Istio `AuthorizationPolicy` (`authorizationPolicy.*`, the consumer's service account is a placeholder to confirm with Platform), and the OpenAPI and LLD copies follow the design repository (LLD rev 1.15). Status codes are unchanged; the `401` detail is `missing or invalid internal caller identity`.
 - `platform-pgcommon/v2` moves from v2.0.0 to v2.0.2 (a patch release; an indirect module here).
 - CI: the coverage step runs `make cover-check-pkg`, so each package is held to its floor (it only printed the total before). The PR summary comment shows the total without a made-up limit.
 - The `PR summary` job posts the sticky pull request comment with the job results and the coverage figure (`.github/scripts/pr-summary.js`, as the other workflow repositories do); it only printed a line before. The test job uploads the merged coverage profile for it.

@@ -2,7 +2,7 @@
 # Smoke test of the built image against a real Valkey: the gateway becomes
 # ready, a ticket is minted from gateway identity headers, a stream opened
 # with it receives an event ingested for that user, and the internal route
-# refuses a request without the token.
+# refuses a request without the system caller identity.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -10,7 +10,6 @@ cd "$(dirname "$0")/.."
 : "${GO_PRIVATE_TOKEN:?GO_PRIVATE_TOKEN is required to build the image}"
 image="${SMOKE_IMAGE:-workflow-stream-gateway:smoke}"
 net="sg-smoke-$$"
-token="smoke-internal-token"
 port="${SMOKE_PORT:-18080}"
 stream_out=$(mktemp)
 token_file=$(mktemp)
@@ -36,7 +35,7 @@ docker network create "$net" >/dev/null
 docker run -d --name "$net-valkey" --network "$net" valkey/valkey:8-alpine >/dev/null
 docker run -d --name "$net-gw" --network "$net" -p "$port:8080" \
   -e APP_ENV=test -e VALKEY_ADDR="$net-valkey:6379" \
-  -e WORKFLOW_STREAM_GATEWAY_TOKEN="$token" -e OTEL_EXPORTER_OTLP_ENDPOINT=none \
+  -e OTEL_EXPORTER_OTLP_ENDPOINT=none \
   "$image" >/dev/null
 
 base="http://localhost:$port"
@@ -60,13 +59,13 @@ reader=$!
 sleep 2
 
 status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/v1/internal/events" -d '{}')
-[ "$status" = 401 ] || [ "$status" = 403 ] || { echo "smoke: the internal route answered $status without a token"; exit 1; }
+[ "$status" = 401 ] || [ "$status" = 403 ] || { echo "smoke: the internal route answered $status without the system caller identity"; exit 1; }
 
 id=$(uuidgen | tr '[:upper:]' '[:lower:]')
 event=$(printf '{"id":"%s","type":"WorkflowTaskCreated","source":"workflow-execution-service","time":"%s","tenant_id":"%s","data":{"assignee_user_ids":["%s"],"department_id":"%s"}}' \
   "$id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tenant" "$user" "$(uuidgen | tr '[:upper:]' '[:lower:]')")
 status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/v1/internal/events" \
-  -H "x-internal-token: $token" -H "Content-Type: application/json" -d "$event")
+  -H "x-user-id: iam-system" -H "x-tenant-roles: iam-system" -H "Content-Type: application/json" -d "$event")
 [ "$status" = 200 ] || { echo "smoke: ingest answered $status"; exit 1; }
 
 for _ in $(seq 1 10); do

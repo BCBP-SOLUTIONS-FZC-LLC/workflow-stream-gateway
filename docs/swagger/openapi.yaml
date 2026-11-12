@@ -6,7 +6,8 @@ info:
     Real-time dashboard push. Projects Execution Service's outbound domain events
     to the browser over Server-Sent Events (SSE). Stateless except for Valkey
     (ticket store, per-user event streams, connection/rate counters). See
-    workflow_stream_gateway.md for the full LLD.
+    workflow_stream_gateway.md for the full LLD. A path no route serves, and any
+    path that contains an encoded slash, answers a `not-found` problem (404).
 
 servers:
   - url: https://api.internal/stream
@@ -51,14 +52,16 @@ components:
     InternalServiceAuth:
       type: apiKey
       in: header
-      name: x-internal-token
+      name: x-tenant-roles
       description: >
-        Service-to-service credential for the /internal route group
-        (RequireInternalToken, WORKFLOW_STREAM_GATEWAY_TOKEN) — the same
-        convention execution_service and definition_service already ship. Not
+        The reserved system role `iam-system`, sent with an `x-user-id`, for the
+        /internal route group, the way the IAM services call each other. Not
         exposed through the Envoy public gateway; carries no gateway identity
-        headers. Tenant context for this route comes from the envelope's own
-        tenant_id, not from x-tenant-id.
+        headers. Mutual TLS in the mesh names the caller, and the authorization
+        policy admits the route `POST /api/v1/internal/events` (an exact path) for
+        its caller only, the shared events consumer; a Kubernetes NetworkPolicy
+        admits the same caller as a pod. The headers are not a credential. Tenant context for this route comes from
+        the envelope's own tenant_id, not from x-tenant-id.
 
   parameters:
     TenantIdHeader:
@@ -371,7 +374,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
         "401":
-          description: Missing or invalid x-internal-token.
+          description: Missing or invalid internal caller identity.
           content:
             application/problem+json:
               schema:

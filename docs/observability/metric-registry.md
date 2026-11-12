@@ -46,6 +46,7 @@ The registry defines no `workflow_*` metrics yet, so none are emitted.
 | `workflow_stream_gateway_connections_open` | gauge | - | Current open SSE connection count, the scaling signal for this service. |
 | `workflow_stream_gateway_connections_rejected_total` | counter | `reason` | Total stream connections rejected, by reason. |
 | `workflow_stream_gateway_frames_written_total` | counter | `event_type` | Total Valkey Stream entries written by the fan-out path, by event_type. |
-| `workflow_stream_gateway_internal_events_ingest_total` | counter | `event_type`, `result` | Total internal event ingest calls, by event_type and result. |
+| `workflow_stream_gateway_internal_auth_rejected_total` | counter | `reason` | Internal-route requests refused for lacking the system caller identity, by reason (missing_user or missing_role). |
+| `workflow_stream_gateway_internal_events_ingest_total` | counter | `event_type`, `result` | Total internal event ingest calls, by event_type (a handled type, or unknown for any other) and result. |
 | `workflow_stream_gateway_tickets_minted_total` | counter | `result` | Total ticket mint calls, by result. |
 

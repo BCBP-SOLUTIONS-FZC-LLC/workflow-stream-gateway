@@ -81,7 +81,6 @@ make dev       # reads .env
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | A collector address; `none` or unset disables export |
 | `VALKEY_ADDR` / `VALKEY_PASSWORD` | `localhost:6379` / empty | |
 | `VALKEY_DIAL_TIMEOUT` / `_READ_TIMEOUT` / `_WRITE_TIMEOUT` | `2s` / `1s` / `1s` | |
-| `WORKFLOW_STREAM_GATEWAY_TOKEN` | empty | Guards the internal endpoint with `x-internal-token`; required outside dev and local |
 | `TICKET_TTL` | `60s` | |
 | `TICKET_MINT_RATE_MAX` / `TICKET_MINT_RATE_WINDOW` | `10` / `60s` | Per-user mint rate |
 | `STREAM_RETENTION_WINDOW` / `STREAM_KEY_TTL` | `10m` / `15m` | The key lifetime must exceed the retention window |
@@ -119,7 +118,7 @@ Dependency direction is `domain ← usecase ← adapter`, enforced by `.go-arch-
 | --- | --- | --- |
 | `POST /api/v1/stream/tickets` | Browser through the gateway | Gateway identity headers required |
 | `GET /api/v1/stream` | Browser `EventSource` | Authenticated by the ticket in the query; resumes from `Last-Event-ID` |
-| `POST /api/v1/internal/events` | The Workflow-Events Consumer | `x-internal-token`; unknown types are acknowledged with 200 |
+| `POST /api/v1/internal/events` | The Workflow-Events Consumer | System caller identity (`x-user-id` and `x-tenant-roles: iam-system`), else `401`; unknown types are acknowledged with 200 |
 
 Tests fail when the OpenAPI and the router list different operations, or the AsyncAPI and the routed event types differ.
 
@@ -127,7 +126,7 @@ Tests fail when the OpenAPI and the router list different operations, or the Asy
 
 ## Deployment
 
-One image from the `Dockerfile`, base images pinned by digest (`make pin-base-images`). The chart in `deploy/helm` has a Deployment with hard anti-affinity, a PDB, a NetworkPolicy that names the gateway and the consumer, an optional `ServiceMonitor` and `PrometheusRule`, an optional HPA, and one HTTPRoute with its own SecurityPolicy per exposed path: the ticket route merges with the Gateway's JWT and authorisation filter, the stream route replaces it because the ticket is its only credential. The scaling signal is the open connection count, which needs a custom metrics adapter, so autoscaling is off by default. `make helm-lint` validates the rendered chart and both policies.
+One image from the `Dockerfile`, base images pinned by digest (`make pin-base-images`). The chart in `deploy/helm` has a Deployment with hard anti-affinity, a PDB, a NetworkPolicy that names the gateway and the consumer, an Istio `AuthorizationPolicy` (`authorizationPolicy.*`, on by default) that admits every caller outside `/api/v1/internal/*` and, per route group (`authorizationPolicy.internalRoutes`), only that group's service accounts on its exact path: the event consumer's on `/api/v1/internal/events` (a placeholder to confirm with Platform). The render refuses `authorizationPolicy.enabled: false` when `env.APP_ENV` is `staging` or `prod`, unless `authorizationPolicy.allowDisabled: true`; the policy needs a sidecar and mutual TLS on both ends (`PeerAuthentication` is Platform's). The Service ports carry `appProtocol: http`, an optional `ServiceMonitor` and `PrometheusRule`, an optional HPA, and one HTTPRoute with its own SecurityPolicy per exposed path: the ticket route merges with the Gateway's JWT and authorisation filter, the stream route replaces it because the ticket is its only credential. The scaling signal is the open connection count, which needs a custom metrics adapter, so autoscaling is off by default. `make helm-lint` validates the rendered chart and both policies.
 
 ## Observability
 
@@ -136,7 +135,7 @@ Every series carries `domain` (`workflow`), `service` (`workflow-stream-gateway`
 ## Security
 
 - The ticket is the only source of connection identity on the stream route; a client-supplied identity is never read.
-- The internal endpoint compares `x-internal-token` in constant time and caps request bodies at 10 MiB.
+- The internal endpoint admits only the system caller identity (`x-tenant-roles` holds `iam-system`, `x-user-id` is set) and caps request bodies at 10 MiB. The headers are not a credential: mesh mutual TLS names the caller, and an Istio `AuthorizationPolicy` admits only the event consumer on `/api/v1/internal/events`. With the policy off, the header check is the only gate besides the NetworkPolicy. The router matches the raw path and answers `404` for an encoded slash, so `/api/v1/internal%2Fevents` reaches no handler. A refused caller is counted in `workflow_stream_gateway_internal_auth_rejected_total{reason}`.
 - Per-user connection and mint-rate caps live in Valkey; the connection counter cannot go negative.
 - Container: distroless, non-root, read-only root filesystem, all capabilities dropped.
 

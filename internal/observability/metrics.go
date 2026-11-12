@@ -14,11 +14,12 @@ const (
 )
 
 var (
-	TicketsMintedTotal       *prometheus.CounterVec
-	ConnectionsOpen          prometheus.Gauge
-	ConnectionsRejectedTotal *prometheus.CounterVec
-	EventsIngestTotal        *prometheus.CounterVec
-	FramesWrittenTotal       *prometheus.CounterVec
+	TicketsMintedTotal        *prometheus.CounterVec
+	ConnectionsOpen           prometheus.Gauge
+	ConnectionsRejectedTotal  *prometheus.CounterVec
+	EventsIngestTotal         *prometheus.CounterVec
+	FramesWrittenTotal        *prometheus.CounterVec
+	InternalAuthRejectedTotal *prometheus.CounterVec
 )
 
 var registerOnce sync.Once
@@ -48,12 +49,16 @@ func registerServiceMetrics() {
 		"reason"))
 	EventsIngestTotal = must(gincommon.NewCounterVec(nil,
 		"workflow_stream_gateway_internal_events_ingest_total",
-		"Total internal event ingest calls, by event_type and result.",
+		"Total internal event ingest calls, by event_type (a handled type, or unknown for any other) and result.",
 		"event_type", "result"))
 	FramesWrittenTotal = must(gincommon.NewCounterVec(nil,
 		"workflow_stream_gateway_frames_written_total",
 		"Total Valkey Stream entries written by the fan-out path, by event_type.",
 		"event_type"))
+	InternalAuthRejectedTotal = must(gincommon.NewCounterVec(nil,
+		"workflow_stream_gateway_internal_auth_rejected_total",
+		"Internal-route requests refused for lacking the system caller identity, by reason (missing_user or missing_role).",
+		"reason"))
 
 	preInitializeClosedLabelSets()
 }
@@ -64,5 +69,8 @@ func preInitializeClosedLabelSets() {
 	}
 	for _, reason := range []string{"cap_exceeded", "invalid_ticket", "valkey_unavailable"} {
 		ConnectionsRejectedTotal.WithLabelValues(reason)
+	}
+	for _, reason := range []string{"missing_user", "missing_role"} {
+		InternalAuthRejectedTotal.WithLabelValues(reason)
 	}
 }

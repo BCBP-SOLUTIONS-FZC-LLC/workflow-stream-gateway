@@ -1,13 +1,14 @@
 package middleware
 
 import (
-	"crypto/subtle"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
-)
 
-const InternalTokenHeader = "x-internal-token"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability"
+)
 
 type problemDetails struct {
 	Type      string `json:"type"`
@@ -20,20 +21,16 @@ type problemDetails struct {
 	RequestID string `json:"request_id,omitempty"`
 }
 
-func RequireInternalToken(token string) gin.HandlerFunc {
+func RequireSystemCaller() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if token == "" {
-			c.Next()
-			return
-		}
-		provided := c.GetHeader(InternalTokenHeader)
-		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+		if reason := rejectionReason(c); reason != "" {
+			recordRejection(reason)
 			c.Header("Content-Type", "application/problem+json")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, problemDetails{
 				Type:      "https://errors.bcbp.io/workflow-stream-gateway/unauthorized",
 				Title:     "Unauthorized",
 				Status:    http.StatusUnauthorized,
-				Detail:    "missing or invalid x-internal-token header",
+				Detail:    "missing or invalid internal caller identity",
 				Instance:  c.Request.URL.Path,
 				Code:      "unauthorized",
 				TraceID:   c.Writer.Header().Get("X-Trace-ID"),
@@ -43,6 +40,31 @@ func RequireInternalToken(token string) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func recordRejection(reason string) {
+	if observability.InternalAuthRejectedTotal != nil {
+		observability.InternalAuthRejectedTotal.WithLabelValues(reason).Inc()
+	}
+}
+
+func rejectionReason(c *gin.Context) string {
+	switch {
+	case strings.TrimSpace(c.GetHeader("x-user-id")) == "":
+		return "missing_user"
+	case !hasSystemRole(c.GetHeader("x-tenant-roles")):
+		return "missing_role"
+	}
+	return ""
+}
+
+func hasSystemRole(roles string) bool {
+	for _, r := range strings.Split(roles, ",") {
+		if strings.TrimSpace(r) == domain.SystemCaller {
+			return true
+		}
+	}
+	return false
 }
 
 const maxBodyBytes = 10 << 20

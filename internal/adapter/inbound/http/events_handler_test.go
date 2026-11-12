@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability/obstest"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
@@ -168,4 +170,34 @@ func TestEventsHandler_Ingest_ReassignedFansOutToTwo(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, 2, store.appendCalls)
 	assert.Equal(t, 1, store.broadcastCalls)
+}
+
+// The event type is request-controlled text: as a metric label it would let a caller create a
+// series per value.
+func TestEventsHandler_Ingest_ATypeTheServiceDoesNotHandleIsLabelledUnknown(t *testing.T) {
+	obstest.Init(t)
+	const metric = "workflow_stream_gateway_internal_events_ingest_total"
+	rawType := "Random" + rand.Text()
+	store := &fakeEventStore{}
+	r, _ := newEventsTestRouter(store)
+	before := obstest.Sum(t, metric, map[string]string{"event_type": "unknown", "result": "ok"})
+
+	rec := postEvent(r, `{"id":"1","type":"`+rawType+`","source":"iam","time":"2026-08-21T10:00:00Z","data":{}}`)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, before+1, obstest.Sum(t, metric, map[string]string{"event_type": "unknown", "result": "ok"}))
+	assert.Zero(t, obstest.Sum(t, metric, map[string]string{"event_type": rawType}), "the raw type is not a label value")
+}
+
+func TestEventsHandler_Ingest_AHandledTypeKeepsItsOwnLabel(t *testing.T) {
+	obstest.Init(t)
+	const metric = "workflow_stream_gateway_internal_events_ingest_total"
+	labels := map[string]string{"event_type": "WorkflowTaskCreated", "result": "ok"}
+	r, _ := newEventsTestRouter(&fakeEventStore{})
+	before := obstest.Sum(t, metric, labels)
+
+	rec := postEvent(r, validTaskCreatedEnvelope)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, before+1, obstest.Sum(t, metric, labels))
 }
