@@ -10,7 +10,6 @@ import (
 
 func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("APP_ENV", "")
-	t.Setenv("WORKFLOW_STREAM_GATEWAY_TOKEN", "")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -69,23 +68,13 @@ func TestLoad_RejectsUnknownAppEnv(t *testing.T) {
 func TestLoad_AcceptsEveryPlatformAppEnv(t *testing.T) {
 	for _, env := range []string{"local", "dev", "test", "staging", "prod"} {
 		t.Setenv("APP_ENV", env)
-		t.Setenv("WORKFLOW_STREAM_GATEWAY_TOKEN", "secret")
 		_, err := Load()
 		assert.NoError(t, err, env)
 	}
 }
 
-func TestLoad_StagingRequiresInternalToken(t *testing.T) {
-	t.Setenv("APP_ENV", "staging")
-	t.Setenv("WORKFLOW_STREAM_GATEWAY_TOKEN", "")
-
-	_, err := Load()
-	assert.ErrorContains(t, err, "WORKFLOW_STREAM_GATEWAY_TOKEN")
-}
-
-func TestLoad_LocalAndDevMayOmitTheToken(t *testing.T) {
-	t.Setenv("WORKFLOW_STREAM_GATEWAY_TOKEN", "")
-	for _, env := range []string{"local", "dev"} {
+func TestLoad_NoEnvironmentNeedsAnInternalSecret(t *testing.T) {
+	for _, env := range []string{"local", "dev", "test", "staging", "prod"} {
 		t.Setenv("APP_ENV", env)
 		_, err := Load()
 		assert.NoError(t, err, env)
@@ -97,23 +86,6 @@ func TestLoad_DefaultServiceName(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	assert.Equal(t, "workflow-stream-gateway", cfg.OTELServiceName)
-}
-
-func TestLoad_ProdRequiresInternalToken(t *testing.T) {
-	t.Setenv("APP_ENV", "prod")
-	t.Setenv("WORKFLOW_STREAM_GATEWAY_TOKEN", "")
-
-	_, err := Load()
-	assert.ErrorContains(t, err, "WORKFLOW_STREAM_GATEWAY_TOKEN")
-}
-
-func TestLoad_ProdWithTokenSucceeds(t *testing.T) {
-	t.Setenv("APP_ENV", "prod")
-	t.Setenv("WORKFLOW_STREAM_GATEWAY_TOKEN", "secret")
-
-	cfg, err := Load()
-	require.NoError(t, err)
-	assert.Equal(t, "secret", cfg.InternalAPIToken)
 }
 
 func TestValidate_RejectsInvalidHTTPPort(t *testing.T) {
