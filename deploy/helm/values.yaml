@@ -48,7 +48,7 @@ resources:
     memory: "256Mi"
 
 env:
-  APP_ENV: "prod" # one of local, dev, test, staging, prod; outside dev and local the internal token is required
+  APP_ENV: "prod" # one of local, dev, test, staging, prod
   HTTP_PORT: "8080"
   METRICS_PORT: "9090"
   OTEL_SERVICE_NAME: "workflow-stream-gateway"
@@ -69,7 +69,6 @@ env:
 
 envFromSecret:
   - VALKEY_PASSWORD
-  - WORKFLOW_STREAM_GATEWAY_TOKEN # required outside dev and local; the pod fails to start without it
 
 # existingSecret — preferred for production. See secret.yaml for the two
 # supported modes (existingSecret vs. secretValues).
@@ -77,7 +76,6 @@ existingSecret: ""
 rotationEpoch: "0"
 secretValues:
   VALKEY_PASSWORD: ""
-  WORKFLOW_STREAM_GATEWAY_TOKEN: ""
 
 # terminationGracePeriodSeconds covers cmd/server's own 10s shutdownTimeout
 # with headroom, but does NOT solve graceful SSE drain on its own: Go's
@@ -148,6 +146,30 @@ networkPolicy:
       app.kubernetes.io/name: prometheus
   additionalIngressRules: []
   additionalEgressRules: []
+
+# authorizationPolicy: Istio AuthorizationPolicy (security.istio.io/v1, action ALLOW) that replaces the
+# retired shared internal token. The mesh names each caller by its service account (mutual TLS), so the
+# policy needs a sidecar on both ends; a caller without a mesh identity is refused on the internal path.
+# The first rule admits every request outside /api/v1/internal/* (gateway routes, probes, metrics).
+# Each entry of internalRoutes then admits its own callers onto its own paths, one rule per entry.
+# An entry with no caller renders no rule, so its paths stay closed.
+# Turning it off leaves the NetworkPolicy alone in front of the internal route: the render refuses that
+# in staging and prod unless allowDisabled is true. PeerAuthentication (mesh-wide mTLS) is Platform's.
+authorizationPolicy:
+  enabled: true
+  allowDisabled: false
+  trustDomain: cluster.local
+  # PLACEHOLDER, confirm with Platform: the namespace and ServiceAccount name below.
+  # Istio matches a wildcard at the start or the end of a path only, and "/x/*" never matches "/x",
+  # so the route is named by its exact path.
+  internalRoutes:
+    # The event consumer forwards every event to POST /api/v1/internal/events.
+    - name: events
+      paths:
+        - /api/v1/internal/events
+      callers:
+        - namespace: workflow-app
+          serviceAccount: workflow-events-consumer
 
 prometheusRule:
   enabled: false

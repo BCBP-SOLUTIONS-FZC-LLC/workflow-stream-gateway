@@ -43,3 +43,12 @@ Image tag: prefer .Values.image.tag; fall back to chart appVersion.
 {{- define "workflow-stream-gateway.imageTag" -}}
 {{- .Values.image.tag | default .Chart.AppVersion }}
 {{- end }}
+
+{{/*
+With the policy off, the NetworkPolicy alone fronts the internal route: refused in staging and prod unless accepted.
+*/}}
+{{- define "workflow-stream-gateway.validateAuthorizationPolicy" -}}
+{{- if and (not .Values.authorizationPolicy.enabled) (has .Values.env.APP_ENV (list "prod" "staging")) (not .Values.authorizationPolicy.allowDisabled) -}}
+{{- fail (printf "authorizationPolicy.enabled is false while env.APP_ENV is %s: only the NetworkPolicy would stand in front of the internal route. Enable the policy, or set authorizationPolicy.allowDisabled=true to accept that" .Values.env.APP_ENV) -}}
+{{- end -}}
+{{- end }}
