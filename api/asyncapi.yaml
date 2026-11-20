@@ -156,7 +156,7 @@ components:
     ReassignedPayload:
       type: object
       additionalProperties: true
-      required: [old_user_id, new_user_id, department_id]
+      required: [new_user_id, department_id]
       properties:
         old_user_id: { type: string, format: uuid }
         new_user_id: { type: string, format: uuid }
