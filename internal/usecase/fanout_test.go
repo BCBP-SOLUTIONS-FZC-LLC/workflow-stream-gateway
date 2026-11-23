@@ -300,6 +300,7 @@ func TestFanoutService_Ingest_EveryRenderedEventReachesItsRecipients(t *testing.
 		{"WorkflowTaskCompleted", task, []string{"u1", "u2"}, true},
 		{"WorkflowTaskDeferred", task, []string{"u1", "u2"}, true},
 		{"WorkflowTaskReassigned", `{"old_user_id":"old-1","new_user_id":"new-1","department_id":"dept-a"}`, []string{"old-1", "new-1"}, true},
+		{"WorkflowTaskReassigned", `{"new_user_id":"new-1","department_id":"dept-a"}`, []string{"new-1"}, true},
 		{"WorkflowTaskSuperseded", task, []string{"u1", "u2"}, true},
 		{"WorkflowTaskFailed", task, []string{"u1", "u2"}, true},
 		{"WorkflowTaskSlaWarning", task, []string{"u1", "u2"}, true},

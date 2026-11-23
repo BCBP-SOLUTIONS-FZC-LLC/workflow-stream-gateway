@@ -37,6 +37,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
+- Docs only: the LLD (1.17) states that the reassigned event reaches the new assignee alone when it names no old assignee.
+- `api/asyncapi.yaml`: `old_user_id` is optional on the reassigned event, as the Execution Service omits it when nobody held the task; the gateway already skips the missing recipient and still delivers to the new assignee and the department.
 - Docs only: the in-repo LLD, the AsyncAPI and the OpenAPI match the design repository again. No code changed.
 - Chart: per-route caller rules (`authorizationPolicy.internalRoutes` replaces `internalCallers`; the `events` group names the exact path `/api/v1/internal/events`), the render refuses a disabled policy in staging and prod unless `authorizationPolicy.allowDisabled`, `NOTES.txt` states the sidecar and mutual TLS requirement, `appProtocol: http` on the Service ports, and `make helm-lint` runs chart tests that decode the rendered policy, check the ServiceAccount name for any release name and walk the chart for the retired token.
 - The internal route admits the system caller identity (`x-tenant-roles` holds `iam-system` and `x-user-id` is set) instead of the shared `x-internal-token`: `WORKFLOW_STREAM_GATEWAY_TOKEN` is removed (setting, startup requirement, chart secret key, compose, smoke test), the chart ships an Istio `AuthorizationPolicy` (`authorizationPolicy.*`, the consumer's service account is a placeholder to confirm with Platform), and the OpenAPI and LLD copies follow the design repository (LLD rev 1.15). Status codes are unchanged; the `401` detail is `missing or invalid internal caller identity`.

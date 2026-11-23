@@ -10,8 +10,8 @@
 | Service | Workflow Stream Gateway (`workflow-stream-gateway`) |
 | Supersedes | `dashboard_stream_gateway.md` (proposal, rev 1.2) — see that document's own superseded banner |
 | Subsystem | Workflow Engine — real-time dashboard push |
-| Version | 1.16 |
-| Date | 2026-11-11 |
+| Version | 1.17 |
+| Date | 2026-11-22 |
 | Status | Approved |
 | Audience | Workflow Engine team, platform/infra |
 | Owner database | None — Valkey only (stateless service) |
@@ -37,6 +37,7 @@
 | 1.14 | 2026-11-03 | **The header matches the revision history, and Execution's dedup table is named as built** (header, §9.2). The header still said version 1.10 of 2026-10-26. §9.2 said the Execution Service dedups through a `processed_event` table; it is the `platform-events` inbox table `processed_events`. |
 | 1.15 | 2026-11-11 | **The internal route admits the system caller identity and no shared token** (§2.1; §3.1; §3.2; §9.5; §10.1; §12; Appendix A). `/api/v1/internal/events` admits a request whose `x-tenant-roles` holds `iam-system` and whose `x-user-id` is set, and answers `401` otherwise; mesh identity, an authorization policy and the NetworkPolicy decide who can call. `WORKFLOW_STREAM_GATEWAY_TOKEN` no longer exists. |
 | 1.16 | 2026-11-11 | **One authorization rule per internal route, a render guard, the raw-path router and the metric labels** (§3.2; §5.4; §9.5; §11). The authorization policy holds one rule per internal route group: the route `POST /api/v1/internal/events`, named by its exact path, with the shared events consumer as its caller. The chart refuses to render with the policy off for `staging` and `prod` unless it is explicitly allowed. The policy needs a sidecar with mutual TLS, and `PeerAuthentication` is Platform's. The router matches the raw path and answers `404` for any path that contains an encoded slash. The `event_type` label of the ingest counter is a handled type or `unknown`. A new counter, `workflow_stream_gateway_internal_auth_rejected_total{reason}`, counts internal requests refused for a missing identity (`missing_user`, `missing_role`). |
+| 1.17 | 2026-11-22 | **The reassigned event names the old assignee only when there was one** (§3.1; §6.1; §13). `old_user_id` is optional on `WorkflowTaskReassigned`; the event reaches the new assignee alone when it is absent. |
 
 ---
 
@@ -173,7 +174,7 @@ The `wf-workflow-dash-q` SNS subscription's own filter policy (on the `EventType
 | `WorkflowTaskClaimed` | A multi-assignee task was claimed by its lead assignee; the other assignees see live that it is taken. |
 | `WorkflowTaskCompleted` | A task's stage transitioned (incl. a caller-agnostic Complete); reconcile any optimistic UI update. |
 | `WorkflowTaskDeferred` | A task regressed to an earlier node (stage-defer); tell the preparator it was sent back. |
-| `WorkflowTaskReassigned` | A task moved between assignees (admin reassign, node-override, or delegation reroute) — routes to both `old_user_id` (remove from list) and `new_user_id` (add to list), per §6. |
+| `WorkflowTaskReassigned` | A task moved between assignees (admin reassign, node-override, or delegation reroute) — routes to `new_user_id` (add to list) and, when the event names one, `old_user_id` (remove from list), per §6. |
 | `WorkflowTaskSuperseded` | A task was bypassed by a force-forward and closed; remove it from the recipients' lists. |
 | `WorkflowTaskFailed` | A task failed, swept up by an instance cancel, terminate or failure or failed by its own connector stage; remove it from the recipients' lists. |
 | `WorkflowTaskSlaWarning` | A task's follow-up deadline elapsed unresolved; nudge the assignee. |
@@ -278,7 +279,7 @@ Routing key: `(tenant_id, user_id)`, derived per-event from the payload's own re
 | Event class | Recipient field(s) | Recipients |
 | --- | --- | --- |
 | Task-scoped (`WorkflowTask*`, except reassigned) | `assignee_user_ids[]` | every user in the array |
-| `WorkflowTaskReassigned` | `old_user_id`, `new_user_id` | both — the old assignee needs "removed from your list," the new one needs "added to your list" |
+| `WorkflowTaskReassigned` | `old_user_id` (optional), `new_user_id` | the new assignee always ("added to your list"); the old assignee too when the event names one ("removed from your list") |
 | Instance-scoped (`WorkflowInstance*`) | `started_by_user_id` | always |
 
 For each recipient, the `/internal/events` handler (§3.2) writes one entry into that user's Valkey Stream — a task with three assignees produces three `XADD` calls from one ingested envelope.
@@ -453,7 +454,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 ## 13. Testing Strategy
 
 - **Ticket lifecycle:** mint → validate → expire; reusable-within-TTL behavior (a second `GET /api/v1/stream` with the same still-valid ticket succeeds, matching native `EventSource` reconnect on a brief blip).
-- **Fan-out correctness:** one ingested envelope with N recipients produces exactly N `XADD` calls, correct key per recipient; `WorkflowTaskReassigned` produces exactly 2 (`old_user_id`, `new_user_id`), never conflated.
+- **Fan-out correctness:** one ingested envelope with N recipients produces exactly N `XADD` calls, correct key per recipient; `WorkflowTaskReassigned` produces exactly 2 (`old_user_id`, `new_user_id`) when the event names an old assignee and exactly 1 (`new_user_id`) when it does not, never conflated.
 - **Partial-failure retry semantics (§3.2):** simulate a Valkey write failure on recipient 2 of 3 — assert `502`, and that a subsequent retry's duplicate `XADD` to recipients 1 and 3 is harmless (stream contains the duplicate, not an error).
 - **Reconnect/backfill:** `XRANGE`-based replay within the 10-minute window; `resync-required` frame beyond it.
 - **Isolation:** a ticket minted for `(tenant A, user 1)` can never read `(tenant A, user 2)`'s or `(tenant B, user 1)`'s stream — construct a `GET /api/v1/stream` call attempting to pass a client-supplied `tenant_id`/`user_id` and assert it's ignored entirely (identity comes only from the ticket).
