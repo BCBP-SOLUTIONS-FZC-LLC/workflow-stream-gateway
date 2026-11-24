@@ -1,14 +1,18 @@
-# ci-gate: lets a draft PR (or a PR labeled "skip-ci") skip the expensive
-# jobs below while iterating — never applies on push (a merge to main),
-# since github.event.pull_request.* only exists on pull_request events.
+# ci-gate: a draft PR, a documentation-only change or a PR labeled "skip-ci"
+# skips the expensive jobs below, and every check still reports (skipped counts
+# as passed), so no required check is ever left waiting. Draft and skip-ci exist
+# only on pull_request events; the documentation-only rule also applies to a push
+# to main (it compares the pushed commits). A manual run has no base to compare,
+# so it always runs everything.
 name: CI
 
 "on":
   push:
     branches: [main]
-    paths-ignore: ['**.md', 'docs/**']
   pull_request:
-    paths-ignore: ['**.md', 'docs/**']
+    # ready_for_review runs CI when a draft is marked ready; labeled and unlabeled
+    # re-run the gate when skip-ci is added to or taken off a PR.
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
@@ -29,34 +33,72 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
-      run: ${{ steps.decide.outputs.run }}
+      skip: ${{ steps.decide.outputs.skip }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # docs_only is true when every changed file is documentation: Markdown,
+      # Mermaid, .claude/, docs/ (except the API spec under docs/swagger/) or
+      # LICENSE. The required checks then report skipped instead of running.
+      - id: docs
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          docs_only=false
+          if [ -n "$BASE" ] && [ "$BASE" != 0000000000000000000000000000000000000000 ] &&
+            files="$(git diff --name-only "$BASE...$HEAD" 2>/dev/null)" && [ -n "$files" ]; then
+            code="$(while read -r f; do
+              case "$f" in
+                docs/swagger/*) echo "$f" ;;
+                *.md | *.mmd | .claude/* | docs/* | LICENSE) ;;
+                *) echo "$f" ;;
+              esac
+            done <<<"$files")"
+            [ -z "$code" ] && docs_only=true
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "docs_only=$docs_only"
+
+      # skip is true for a draft, a documentation-only change or a PR with the
+      # skip-ci label. The reusable Validate workflows are still called and their
+      # jobs report skipped, because a check nested in a workflow that is never
+      # called never reports and a required check would stay pending; the other
+      # jobs report skipped through their own condition.
       - id: decide
-        run: >
-          echo "run=${{
-            github.event_name != 'pull_request' ||
-            (github.event.pull_request.draft == false &&
-             !contains(github.event.pull_request.labels.*.name, 'skip-ci'))
-          }}" >> "$GITHUB_OUTPUT"
+        env:
+          DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+          SKIP_LABEL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
+          DOCS_ONLY: ${{ steps.docs.outputs.docs_only }}
+        run: |
+          skip=false
+          if [ "$DRAFT" = true ] || [ "$DOCS_ONLY" = true ] || [ "$SKIP_LABEL" = true ]; then skip=true; fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          echo "skip=$skip (draft=$DRAFT, docs_only=$DOCS_ONLY, skip-ci label=$SKIP_LABEL)"
 
   validate-quality:
     name: Validate / Quality
     needs: [ci-gate]
-    if: needs.ci-gate.outputs.run == 'true'
     uses: ./.github/workflows/validate-quality.yml
     secrets: inherit
+    with:
+      skip: ${{ needs.ci-gate.outputs.skip == 'true' }}
 
   validate-test:
     name: Validate / Test
     needs: [ci-gate]
-    if: needs.ci-gate.outputs.run == 'true'
     uses: ./.github/workflows/validate-test.yml
     secrets: inherit
+    with:
+      skip: ${{ needs.ci-gate.outputs.skip == 'true' }}
 
   build-image-cache:
     name: Build image (cache)
     needs: [ci-gate]
-    if: needs.ci-gate.outputs.run == 'true'
+    if: needs.ci-gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
