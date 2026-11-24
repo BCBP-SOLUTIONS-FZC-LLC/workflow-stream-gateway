@@ -45,9 +45,7 @@ module.exports = async function prSummary({ github, context }) {
   const allPassed = JOB_LABELS
     .filter(([id]) => jobResults[id])
     .every(([id]) => ["success", "skipped"].includes(jobResults[id].result));
-  const ranAny = JOB_LABELS
-    .filter(([id]) => jobResults[id])
-    .some(([id]) => jobResults[id].result === "success");
+  const ranAny = process.env.CI_SKIPPED !== "true";
   const headline = !allPassed
     ? "❌ Some checks failed"
     : ranAny
