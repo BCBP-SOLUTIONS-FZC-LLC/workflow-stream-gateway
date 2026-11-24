@@ -19,7 +19,7 @@ func routerConfigWithFakes(events *fakeEventStore, tickets *fakeTicketStore) Rou
 	cfg := testRouterConfig()
 	ticketService := usecase.NewTicketService(tickets, time.Minute, 10, time.Minute)
 	cfg.TicketHandler = NewTicketHandler(ticketService)
-	cfg.EventsHandler = NewEventsHandler(usecase.NewFanoutService(events))
+	cfg.EventsHandler = NewEventsHandler(usecase.NewFanoutService(events, loadShippedRoutes()))
 	cfg.StreamHandler = NewStreamHandler(usecase.NewStreamService(ticketService, nil, nil, 5, time.Minute, 15*time.Second))
 	return cfg
 }

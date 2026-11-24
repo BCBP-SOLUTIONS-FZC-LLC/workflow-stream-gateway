@@ -19,6 +19,9 @@ services:
     environment:
       APP_ENV: dev
       VALKEY_ADDR: valkey:6379
+      ROUTING_CONFIG_PATH: /etc/workflow-stream-gateway/routing.yaml
+    volumes:
+      - ./config/routing.yaml:/etc/workflow-stream-gateway/routing.yaml:ro
     ports:
       - "8080:8080"
     depends_on:

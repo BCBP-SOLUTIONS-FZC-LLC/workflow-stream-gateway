@@ -35,6 +35,8 @@ type Config struct {
 	ConnectionCapPerUser int
 
 	HeartbeatInterval time.Duration
+
+	RoutingConfigPath string
 }
 
 func Load() (*Config, error) {
@@ -64,6 +66,8 @@ func Load() (*Config, error) {
 
 		HTTPPort:    envInt("HTTP_PORT", 8080),
 		MetricsPort: envInt("METRICS_PORT", 9090),
+
+		RoutingConfigPath: getEnvOrDefault("ROUTING_CONFIG_PATH", "config/routing.yaml"),
 
 		ValkeyAddr:         getEnvOrDefault("VALKEY_ADDR", "localhost:6379"),
 		ValkeyPassword:     getEnvOrDefault("VALKEY_PASSWORD", ""),

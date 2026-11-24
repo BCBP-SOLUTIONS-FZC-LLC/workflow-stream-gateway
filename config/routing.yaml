@@ -1,0 +1,34 @@
+# Routing file of the Workflow Stream Gateway (LLD §6).
+#
+# One section per publishing service. The envelope's `source` field picks the
+# section, and the event type picks the entry. A (source, type) pair that is not
+# listed is acknowledged with 200 and ignored. Each entry names the payload
+# fields that hold the personal recipients (a user ID string or an array of
+# them) and, optionally, the field that holds the department ID; an entry with
+# a department field is also written to that department's tier. Every listed
+# event is written to the tenant-wide tier. The browser receives each event as
+# `<service>.<type>`.
+#
+# The chart carries the same content as `routing` values; a test fails when
+# they differ.
+version: 1
+services:
+  workflow:
+    source: workflow-execution-svc
+    events:
+      WorkflowTaskCreated:     { recipients: [assignee_user_ids], department: department_id }
+      WorkflowTaskClaimed:     { recipients: [assignee_user_ids], department: department_id }
+      WorkflowTaskCompleted:   { recipients: [assignee_user_ids], department: department_id }
+      WorkflowTaskDeferred:    { recipients: [assignee_user_ids], department: department_id }
+      WorkflowTaskReassigned:  { recipients: [old_user_id, new_user_id], department: department_id }
+      WorkflowTaskSuperseded:  { recipients: [assignee_user_ids], department: department_id }
+      WorkflowTaskFailed:      { recipients: [assignee_user_ids], department: department_id }
+      WorkflowTaskSlaWarning:  { recipients: [assignee_user_ids], department: department_id }
+      WorkflowTaskSlaBreached: { recipients: [assignee_user_ids], department: department_id }
+      WorkflowInstancePaused:     { recipients: [started_by_user_id] }
+      WorkflowInstanceResumed:    { recipients: [started_by_user_id] }
+      WorkflowInstanceCancelled:  { recipients: [started_by_user_id] }
+      WorkflowInstanceTerminated: { recipients: [started_by_user_id] }
+      WorkflowInstanceDegraded:   { recipients: [started_by_user_id] }
+      WorkflowInstanceFailed:     { recipients: [started_by_user_id] }
+      WorkflowInstanceFinished:   { recipients: [started_by_user_id] }

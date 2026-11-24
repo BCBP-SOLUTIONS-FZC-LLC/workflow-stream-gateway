@@ -43,4 +43,4 @@ Collectors are built in `internal/observability` with `platform-gincommon` const
 | File | Describes | Checked by |
 | --- | --- | --- |
 | `docs/swagger/openapi.yaml` | The HTTP surface | a parity test against the router |
-| `api/asyncapi.yaml` | The consumed event types | a parity test against the routed types |
+| `api/asyncapi.yaml` | The consumed event types | a parity test against the `workflow` section of `config/routing.yaml` |

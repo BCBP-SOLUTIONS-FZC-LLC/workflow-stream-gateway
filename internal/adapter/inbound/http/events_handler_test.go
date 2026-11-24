@@ -7,12 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/routingfile"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability/obstest"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
@@ -48,10 +51,25 @@ func (f *fakeEventStore) AppendDepartmentEvent(_ context.Context, _, _, _ string
 	return nil
 }
 
-func newEventsTestRouter(store usecase.EventStreamStore) (*gin.Engine, *usecase.FanoutService) {
+const shippedRoutingFile = "../../../../config/routing.yaml"
+
+var loadShippedRoutes = sync.OnceValue(func() *domain.RoutingTable {
+	routes, err := routingfile.Load(shippedRoutingFile)
+	if err != nil {
+		panic(err)
+	}
+	return routes
+})
+
+func shippedRoutes(t testing.TB) *domain.RoutingTable {
+	t.Helper()
+	return loadShippedRoutes()
+}
+
+func newEventsTestRouter(t testing.TB, store usecase.EventStreamStore) (*gin.Engine, *usecase.FanoutService) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	svc := usecase.NewFanoutService(store)
+	svc := usecase.NewFanoutService(store, shippedRoutes(t))
 	r.POST("/internal/events", NewEventsHandler(svc).Ingest)
 	return r, svc
 }
@@ -74,7 +92,7 @@ const validTaskCreatedEnvelope = `{
 
 func TestEventsHandler_Ingest_KnownTypeSuccess(t *testing.T) {
 	store := &fakeEventStore{}
-	r, _ := newEventsTestRouter(store)
+	r, _ := newEventsTestRouter(t, store)
 
 	rec := postEvent(r, validTaskCreatedEnvelope)
 
@@ -85,7 +103,7 @@ func TestEventsHandler_Ingest_KnownTypeSuccess(t *testing.T) {
 
 func TestEventsHandler_Ingest_UnknownTypeIgnoredWith200(t *testing.T) {
 	store := &fakeEventStore{}
-	r, _ := newEventsTestRouter(store)
+	r, _ := newEventsTestRouter(t, store)
 
 	body := `{"id":"1","type":"user.deleted","source":"iam","time":"2026-08-21T10:00:00Z","data":{}}`
 	rec := postEvent(r, body)
@@ -103,7 +121,7 @@ func (errorReadCloser) Close() error             { return nil }
 
 func TestEventsHandler_Ingest_BodyReadFailureReturns400(t *testing.T) {
 	store := &fakeEventStore{}
-	r, _ := newEventsTestRouter(store)
+	r, _ := newEventsTestRouter(t, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/internal/events", nil)
 	req.Body = errorReadCloser{}
@@ -115,7 +133,7 @@ func TestEventsHandler_Ingest_BodyReadFailureReturns400(t *testing.T) {
 
 func TestEventsHandler_Ingest_MalformedBodyReturns400(t *testing.T) {
 	store := &fakeEventStore{}
-	r, _ := newEventsTestRouter(store)
+	r, _ := newEventsTestRouter(t, store)
 
 	rec := postEvent(r, `not json`)
 
@@ -124,7 +142,7 @@ func TestEventsHandler_Ingest_MalformedBodyReturns400(t *testing.T) {
 
 func TestEventsHandler_Ingest_MissingRequiredFieldReturns400(t *testing.T) {
 	store := &fakeEventStore{}
-	r, _ := newEventsTestRouter(store)
+	r, _ := newEventsTestRouter(t, store)
 
 	// Missing "id".
 	body := `{"type":"WorkflowTaskCreated","source":"workflow-execution-svc","time":"2026-08-21T10:00:00Z","data":{}}`
@@ -135,11 +153,11 @@ func TestEventsHandler_Ingest_MissingRequiredFieldReturns400(t *testing.T) {
 
 func TestEventsHandler_Ingest_KnownTypeInvalidPayloadReturns400(t *testing.T) {
 	store := &fakeEventStore{}
-	r, _ := newEventsTestRouter(store)
+	r, _ := newEventsTestRouter(t, store)
 
 	body := `{
 		"id": "1", "type": "WorkflowTaskCreated", "source": "workflow-execution-svc",
-		"time": "2026-08-21T10:00:00Z", "data": {"assignee_user_ids": "not-an-array"}
+		"time": "2026-08-21T10:00:00Z", "data": {"assignee_user_ids": 7}
 	}`
 	rec := postEvent(r, body)
 
@@ -149,7 +167,7 @@ func TestEventsHandler_Ingest_KnownTypeInvalidPayloadReturns400(t *testing.T) {
 
 func TestEventsHandler_Ingest_StoreFailureReturns502(t *testing.T) {
 	store := &fakeEventStore{forceErr: errors.New("valkey unreachable")}
-	r, _ := newEventsTestRouter(store)
+	r, _ := newEventsTestRouter(t, store)
 
 	rec := postEvent(r, validTaskCreatedEnvelope)
 
@@ -158,7 +176,7 @@ func TestEventsHandler_Ingest_StoreFailureReturns502(t *testing.T) {
 
 func TestEventsHandler_Ingest_ReassignedFansOutToTwo(t *testing.T) {
 	store := &fakeEventStore{}
-	r, _ := newEventsTestRouter(store)
+	r, _ := newEventsTestRouter(t, store)
 
 	body := `{
 		"id": "1", "type": "WorkflowTaskReassigned", "source": "workflow-execution-svc",
@@ -179,7 +197,7 @@ func TestEventsHandler_Ingest_ATypeTheServiceDoesNotHandleIsLabelledUnknown(t *t
 	const metric = "workflow_stream_gateway_internal_events_ingest_total"
 	rawType := "Random" + rand.Text()
 	store := &fakeEventStore{}
-	r, _ := newEventsTestRouter(store)
+	r, _ := newEventsTestRouter(t, store)
 	before := obstest.Sum(t, metric, map[string]string{"event_type": "unknown", "result": "ok"})
 
 	rec := postEvent(r, `{"id":"1","type":"`+rawType+`","source":"iam","time":"2026-08-21T10:00:00Z","data":{}}`)
@@ -192,12 +210,24 @@ func TestEventsHandler_Ingest_ATypeTheServiceDoesNotHandleIsLabelledUnknown(t *t
 func TestEventsHandler_Ingest_AHandledTypeKeepsItsOwnLabel(t *testing.T) {
 	obstest.Init(t)
 	const metric = "workflow_stream_gateway_internal_events_ingest_total"
-	labels := map[string]string{"event_type": "WorkflowTaskCreated", "result": "ok"}
-	r, _ := newEventsTestRouter(&fakeEventStore{})
+	labels := map[string]string{"event_type": "workflow.WorkflowTaskCreated", "result": "ok"}
+	r, _ := newEventsTestRouter(t, &fakeEventStore{})
 	before := obstest.Sum(t, metric, labels)
 
 	rec := postEvent(r, validTaskCreatedEnvelope)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, before+1, obstest.Sum(t, metric, labels))
+}
+
+func TestEventsHandler_Ingest_AWorkflowTypeFromAnotherSourceIsUnknown(t *testing.T) {
+	store := &fakeEventStore{}
+	r, _ := newEventsTestRouter(t, store)
+	body := strings.Replace(validTaskCreatedEnvelope, `"source": "workflow-execution-svc"`, `"source": "tender-svc"`, 1)
+	require.NotEqual(t, validTaskCreatedEnvelope, body)
+
+	rec := postEvent(r, body)
+
+	assert.Equal(t, http.StatusOK, rec.Code, "an unlisted (source, type) pair is acknowledged and ignored")
+	assert.Zero(t, store.appendCalls+store.broadcastCalls+store.departmentCalls)
 }

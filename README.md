@@ -86,8 +86,15 @@ make dev       # reads .env
 | `STREAM_RETENTION_WINDOW` / `STREAM_KEY_TTL` | `10m` / `15m` | The key lifetime must exceed the retention window |
 | `CONNECTION_CAP_PER_USER` | `5` | Concurrent streams per tenant and user |
 | `HEARTBEAT_INTERVAL` | `15s` | |
+| `ROUTING_CONFIG_PATH` | `config/routing.yaml` | The routing file; the chart mounts it from its `routing` values |
 
 A malformed number or duration fails startup rather than falling back to the default.
+
+### Routing file
+
+[config/routing.yaml](config/routing.yaml) decides which events are rendered and to whom: one section per publishing service, matched by the envelope `source`, each listing its event types with the payload fields that hold the recipients and, optionally, the department. A pair of source and type it does not list is acknowledged with 200 and ignored. The browser receives each event as `<service>.<type>`, for example `workflow.WorkflowTaskCreated`. The file is read at start-up and a malformed one fails startup; the chart carries the same content as its `routing` values (a test checks they match) and rolls the pods when it changes.
+
+To add a publishing service, add a section with its `source` and events to both files, then add its queue and routes to the event consumer's topology.
 
 ---
 
@@ -118,9 +125,9 @@ Dependency direction is `domain ← usecase ← adapter`, enforced by `.go-arch-
 | --- | --- | --- |
 | `POST /api/v1/stream/tickets` | Browser through the gateway | Gateway identity headers required |
 | `GET /api/v1/stream` | Browser `EventSource` | Authenticated by the ticket in the query; resumes from `Last-Event-ID` |
-| `POST /api/v1/internal/events` | The Workflow-Events Consumer | System caller identity (`x-user-id` and `x-tenant-roles: iam-system`), else `401`; unknown types are acknowledged with 200 |
+| `POST /api/v1/internal/events` | The Workflow-Events Consumer | System caller identity (`x-user-id` and `x-tenant-roles: iam-system`), else `401`; a pair of source and type the routing file does not list is acknowledged with 200 |
 
-Tests fail when the OpenAPI and the router list different operations, or the AsyncAPI and the routed event types differ.
+Tests fail when the OpenAPI and the router list different operations, or the AsyncAPI and the routing file's `workflow` section list different event types.
 
 ---
 
@@ -155,7 +162,7 @@ Every series carries `domain` (`workflow`), `service` (`workflow-stream-gateway`
 
 ## CI
 
-Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then `validate-quality` and `validate-test`, an image job that lints the Dockerfile and builds the image, a Trivy scan for fixable HIGH and CRITICAL findings, and a smoke test (`make smoke-test`) that runs the image against Valkey, mints a ticket, opens a stream and checks that an ingested event reaches it. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on pull requests that touch code or contracts.
+Pull requests and pushes run `ci.yml`: a `ci-gate` job decides whether to skip (a draft, a change to documentation only, or the `skip-ci` label), then `validate-quality` and `validate-test`, an image job that lints the Dockerfile and builds the image, a Trivy scan for fixable HIGH and CRITICAL findings, and a smoke test (`make smoke-test`) that runs the image against Valkey, mints a ticket, opens a stream and checks that an ingested event reaches it. A skipped run still reports every required check as skipped, so nothing is left waiting, and marking a draft ready starts CI. `changelog-check.yml` requires a CHANGELOG entry on pull requests that touch code or contracts.
 
 ## Versioning and releases
 

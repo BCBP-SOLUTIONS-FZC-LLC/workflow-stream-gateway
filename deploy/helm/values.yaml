@@ -232,3 +232,29 @@ ingress:
   className: ""
   annotations: {}
   tls: []
+
+# Routing file (LLD §6): one section per publishing service, keyed by the envelope
+# source; must equal config/routing.yaml (a chart test checks it). Changing it rolls
+# the pods.
+routing:
+  version: 1
+  services:
+    workflow:
+      source: workflow-execution-svc
+      events:
+        WorkflowTaskCreated:     { recipients: [assignee_user_ids], department: department_id }
+        WorkflowTaskClaimed:     { recipients: [assignee_user_ids], department: department_id }
+        WorkflowTaskCompleted:   { recipients: [assignee_user_ids], department: department_id }
+        WorkflowTaskDeferred:    { recipients: [assignee_user_ids], department: department_id }
+        WorkflowTaskReassigned:  { recipients: [old_user_id, new_user_id], department: department_id }
+        WorkflowTaskSuperseded:  { recipients: [assignee_user_ids], department: department_id }
+        WorkflowTaskFailed:      { recipients: [assignee_user_ids], department: department_id }
+        WorkflowTaskSlaWarning:  { recipients: [assignee_user_ids], department: department_id }
+        WorkflowTaskSlaBreached: { recipients: [assignee_user_ids], department: department_id }
+        WorkflowInstancePaused:     { recipients: [started_by_user_id] }
+        WorkflowInstanceResumed:    { recipients: [started_by_user_id] }
+        WorkflowInstanceCancelled:  { recipients: [started_by_user_id] }
+        WorkflowInstanceTerminated: { recipients: [started_by_user_id] }
+        WorkflowInstanceDegraded:   { recipients: [started_by_user_id] }
+        WorkflowInstanceFailed:     { recipients: [started_by_user_id] }
+        WorkflowInstanceFinished:   { recipients: [started_by_user_id] }

@@ -13,8 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
-
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
 const (
@@ -53,7 +51,7 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 		"docs/swagger/openapi.yaml and the router must list the same operations")
 }
 
-func TestAsyncAPIMessagesMatchKnownEventTypes(t *testing.T) {
+func TestAsyncAPIMessagesMatchTheShippedWorkflowRoutes(t *testing.T) {
 	raw, err := os.ReadFile(asyncAPISpec)
 	require.NoError(t, err)
 	var doc struct {
@@ -70,9 +68,9 @@ func TestAsyncAPIMessagesMatchKnownEventTypes(t *testing.T) {
 		documented = append(documented, m.Name)
 	}
 	sort.Strings(documented)
-	known := append([]string(nil), usecase.KnownEventTypes()...)
+	known := shippedRoutes(t).EventTypes("workflow")
 	sort.Strings(known)
-	assert.Equal(t, known, documented, "api/asyncapi.yaml must document exactly the event types the service routes")
+	assert.Equal(t, known, documented, "api/asyncapi.yaml must document exactly the workflow event types config/routing.yaml routes")
 }
 
 func TestTicketMintDocumentsTheStatusItAnswersWithoutIdentityHeaders(t *testing.T) {

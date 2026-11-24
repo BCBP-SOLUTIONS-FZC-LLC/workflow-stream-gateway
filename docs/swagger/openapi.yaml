@@ -141,9 +141,10 @@ components:
       description: >
         The canonical platform-events wire envelope (platform-events/v2/pkg/events/envelope.go),
         forwarded verbatim by event_consumer. Payload (`data`) is opaque here — this
-        service dispatches on `type` without a strict per-type schema, matching the
-        platform-wide /api/v1/internal/events convention (unrecognized types are accepted
-        and ignored with 200).
+        service looks up the pair of `source` and `type` in its routing file and reads
+        only the recipient and department fields the entry names, matching the
+        platform-wide /api/v1/internal/events convention (a pair the routing file does
+        not list is accepted and ignored with 200).
       required: [id, type, source, time]
       properties:
         id:
@@ -305,8 +306,10 @@ paths:
       responses:
         "200":
           description: >
-            SSE stream opened. Each frame's `data:` is a verbatim platform-events
-            Envelope (see workflow_stream_gateway.md §7 for the exact wire shape);
+            SSE stream opened. Each frame's `event:` is `<service>.<type>` (for
+            example `workflow.WorkflowTaskCreated`) and its `data:` is a verbatim
+            platform-events Envelope (see workflow_stream_gateway.md §7 for the exact
+            wire shape);
             a `: keep-alive` comment every 15s; on backfill-window exhaustion, a
             control frame `event: resync-required`.
           headers:
@@ -365,10 +368,13 @@ paths:
       responses:
         "200":
           description: >
-            Every recipient's XADD succeeded, or the event type was unrecognized
-            (accepted and ignored).
+            Every recipient's XADD succeeded, or the routing file does not list the
+            pair of source and type (accepted and ignored).
         "400":
-          description: Malformed envelope (unparseable JSON, or missing id/type/source/time). Non-retryable.
+          description: >
+            Malformed envelope (unparseable JSON, or missing id/type/source/time), or a
+            payload that is not a JSON object or holds a named recipient or department
+            field of the wrong type. Non-retryable.
           content:
             application/problem+json:
               schema:

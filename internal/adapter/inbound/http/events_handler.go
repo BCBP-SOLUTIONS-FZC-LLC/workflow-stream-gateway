@@ -43,13 +43,8 @@ func (h *EventsHandler) Ingest(c *gin.Context) {
 		return
 	}
 
-	if !usecase.IsKnownEventType(envelope.Type) {
-		recordEventIngest(unknownEventType, "ok")
-		c.Status(http.StatusOK)
-		return
-	}
-
-	err = h.fanout.Ingest(c.Request.Context(), usecase.IngestInput{
+	name, err := h.fanout.Ingest(c.Request.Context(), usecase.IngestInput{
+		Source:      envelope.Source,
 		EventType:   envelope.Type,
 		TenantID:    envelope.TenantID,
 		Payload:     envelope.Payload,
@@ -57,14 +52,17 @@ func (h *EventsHandler) Ingest(c *gin.Context) {
 	})
 
 	switch {
+	case errors.Is(err, usecase.ErrUnknownEventType):
+		recordEventIngest(unknownEventType, "ok")
+		c.Status(http.StatusOK)
 	case errors.Is(err, usecase.ErrInvalidPayload):
-		recordEventIngest(envelope.Type, "bad_payload")
+		recordEventIngest(name, "bad_payload")
 		writeProblem(c, http.StatusBadRequest, "invalid-payload", err.Error())
 	case err != nil:
-		recordEventIngest(envelope.Type, "error")
+		recordEventIngest(name, "error")
 		writeProblem(c, http.StatusBadGateway, "ingest-failed", "failed to fan out event")
 	default:
-		recordEventIngest(envelope.Type, "ok")
+		recordEventIngest(name, "ok")
 		c.Status(http.StatusOK)
 	}
 }

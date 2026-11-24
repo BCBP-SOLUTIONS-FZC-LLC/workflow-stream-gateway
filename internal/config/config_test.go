@@ -25,6 +25,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 15*time.Minute, cfg.StreamKeyTTL)
 	assert.Equal(t, 5, cfg.ConnectionCapPerUser)
 	assert.Equal(t, 15*time.Second, cfg.HeartbeatInterval)
+	assert.Equal(t, "config/routing.yaml", cfg.RoutingConfigPath)
 }
 
 func TestLoad_EnvOverrides(t *testing.T) {
@@ -33,6 +34,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	t.Setenv("TICKET_TTL", "30s")
 	t.Setenv("TICKET_MINT_RATE_MAX", "5")
 	t.Setenv("CONNECTION_CAP_PER_USER", "3")
+	t.Setenv("ROUTING_CONFIG_PATH", "/etc/workflow-stream-gateway/routing.yaml")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -42,6 +44,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	assert.Equal(t, 30*time.Second, cfg.TicketTTL)
 	assert.Equal(t, 5, cfg.TicketMintRateMax)
 	assert.Equal(t, 3, cfg.ConnectionCapPerUser)
+	assert.Equal(t, "/etc/workflow-stream-gateway/routing.yaml", cfg.RoutingConfigPath)
 }
 
 func TestLoad_MalformedValuesFailFast(t *testing.T) {

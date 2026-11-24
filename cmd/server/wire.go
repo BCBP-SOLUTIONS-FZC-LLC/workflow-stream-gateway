@@ -9,16 +9,17 @@ import (
 	sgHTTP "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/inbound/http"
 	sgValkey "github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/valkey"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/config"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
-func newRouter(cfg *config.Config, ginCfg gincommon.Config, client *redis.Client) *gin.Engine {
+func newRouter(cfg *config.Config, ginCfg gincommon.Config, client *redis.Client, routes *domain.RoutingTable) *gin.Engine {
 	ticketStore := sgValkey.NewTicketStore(client)
 	ticketService := usecase.NewTicketService(ticketStore, cfg.TicketTTL, cfg.TicketMintRateMax, cfg.TicketMintRateWindow)
 	ticketHandler := sgHTTP.NewTicketHandler(ticketService)
 
 	eventStore := sgValkey.NewEventStore(client, cfg.StreamRetentionWindow, cfg.StreamKeyTTL)
-	fanoutService := usecase.NewFanoutService(eventStore)
+	fanoutService := usecase.NewFanoutService(eventStore, routes)
 	eventsHandler := sgHTTP.NewEventsHandler(fanoutService)
 
 	streamStore := sgValkey.NewStreamStore(client)

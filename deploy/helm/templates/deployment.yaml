@@ -25,6 +25,8 @@ spec:
       labels:
         {{- include "workflow-stream-gateway.selectorLabels" . | nindent 8 }}
       annotations:
+        # Roll the pods when the routing file changes; it is read once at start-up.
+        checksum/routing: {{ include (print $.Template.BasePath "/configmap-routing.yaml") . | sha256sum }}
         {{- if .Values.existingSecret }}
         # When using an external secret (ESO / CSI), bump rotationEpoch to force
         # a rollout after secret rotation:
@@ -64,6 +66,8 @@ spec:
           env:
             - name: BUILD_VERSION
               value: {{ include "workflow-stream-gateway.imageTag" . | quote }}
+            - name: ROUTING_CONFIG_PATH
+              value: /etc/workflow-stream-gateway/routing.yaml
             {{- range $key, $val := .Values.env }}
             - name: {{ $key }}
               value: {{ $val | quote }}
@@ -84,6 +88,14 @@ spec:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: routing
+              mountPath: /etc/workflow-stream-gateway
+              readOnly: true
+      volumes:
+        - name: routing
+          configMap:
+            name: {{ include "workflow-stream-gateway.fullname" . }}-routing
       affinity:
         # Hard anti-affinity: require pods to land on different nodes.
         # preferred (soft) anti-affinity allows all replicas on one node —

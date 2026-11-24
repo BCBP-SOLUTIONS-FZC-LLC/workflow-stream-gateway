@@ -3,11 +3,16 @@ info:
   title: workflow-stream-gateway events
   version: 1.0.0
   description: >
-    Inbound only. The shared Workflow-Events Consumer forwards the Workflow
-    Execution Service's lifecycle events from the wf-workflow-dash-q queue to
-    POST /api/v1/internal/events. Their payload schemas are owned and registered
-    by the producing service and are not re-registered here. Any other event type
-    is acknowledged with 200 and ignored. This service publishes no events.
+    Inbound only. The shared Workflow-Events Consumer forwards events to
+    POST /api/v1/internal/events. Which events are rendered comes from the routing
+    file (config/routing.yaml), keyed by the envelope source, then the event type;
+    the messages below are its workflow section, the Workflow Execution Service's
+    lifecycle events from the wf-workflow-dash-q queue (source
+    workflow-execution-svc). Their payload schemas are owned and registered by the
+    producing service and are not re-registered here. A pair of source and type the
+    routing file does not list is acknowledged with 200 and ignored. Each event
+    reaches the browser as the SSE event `<service>.<type>`, for example
+    `workflow.WorkflowTaskCreated`. This service publishes no events.
 
 channels:
   wf/workflow/dash:

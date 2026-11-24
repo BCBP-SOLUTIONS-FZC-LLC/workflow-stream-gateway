@@ -3,11 +3,37 @@ package usecase
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/domain"
 )
+
+const workflowSource = "workflow-execution-svc"
+
+const (
+	eventTaskCreated      = "WorkflowTaskCreated"
+	eventTaskReassigned   = "WorkflowTaskReassigned"
+	eventInstanceFinished = "WorkflowInstanceFinished"
+)
+
+// workflowTable builds the routing table from the shipped config/routing.yaml,
+// so every fan-out test also proves the default file reproduces the routing of
+// the Execution Service's events.
+func workflowTable(t *testing.T) *domain.RoutingTable {
+	t.Helper()
+	raw, err := os.ReadFile("../../config/routing.yaml")
+	require.NoError(t, err)
+	var file domain.RoutingFile
+	require.NoError(t, yaml.Unmarshal(raw, &file))
+	table, err := domain.NewRoutingTable(file)
+	require.NoError(t, err)
+	return table
+}
 
 // fakeEventStore tracks all three append kinds through one shared call
 // counter, so failOn can target any specific call regardless of which
@@ -63,30 +89,12 @@ func (f *fakeEventStore) AppendDepartmentEvent(_ context.Context, tenantID, depa
 	return nil
 }
 
-func TestIsKnownEventType(t *testing.T) {
-	known := []string{
-		eventTaskCreated, eventTaskClaimed, eventTaskCompleted, eventTaskDeferred, eventTaskReassigned,
-		eventTaskSuperseded, eventTaskFailed, eventTaskSLAWarning, eventTaskSLABreached,
-		eventInstancePaused, eventInstanceResumed, eventInstanceCancelled, eventInstanceTerminated,
-		eventInstanceDegraded, eventInstanceFailed, eventInstanceFinished,
-	}
-	assert.Equal(t, known, KnownEventTypes())
-	for _, eventType := range known {
-		assert.True(t, IsKnownEventType(eventType), eventType)
-	}
-	assert.False(t, IsKnownEventType("user.deleted"))
-	assert.False(t, IsKnownEventType(""))
-	// Decided 2026-08-24: not consumed, matches execution_service's own
-	// asyncapi.yaml ("the creating client already knows synchronously").
-	assert.False(t, IsKnownEventType("WorkflowInstanceStarted"))
-}
-
 func TestFanoutService_Ingest_TaskEventFansOutToAllAssignees(t *testing.T) {
 	store := &fakeEventStore{}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType:   eventTaskCreated,
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventTaskCreated,
 		TenantID:    "tenant-a",
 		Payload:     []byte(`{"assignee_user_ids":["u1","u2","u3"],"department_id":"dept-a"}`),
 		RawEnvelope: []byte(`{"type":"WorkflowTaskCreated"}`),
@@ -97,51 +105,51 @@ func TestFanoutService_Ingest_TaskEventFansOutToAllAssignees(t *testing.T) {
 	for i, userID := range []string{"u1", "u2", "u3"} {
 		assert.Equal(t, "tenant-a", store.appended[i].tenantID)
 		assert.Equal(t, userID, store.appended[i].userID)
-		assert.Equal(t, eventTaskCreated, store.appended[i].eventType)
+		assert.Equal(t, "workflow."+eventTaskCreated, store.appended[i].eventType)
 	}
 }
 
 func TestFanoutService_Ingest_TaskEventAlwaysBroadcastsTenantWide(t *testing.T) {
 	store := &fakeEventStore{}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType: eventTaskCreated,
-		TenantID:  "tenant-a",
-		Payload:   []byte(`{"assignee_user_ids":["u1"],"department_id":"dept-a"}`),
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventTaskCreated,
+		TenantID: "tenant-a",
+		Payload:  []byte(`{"assignee_user_ids":["u1"],"department_id":"dept-a"}`),
 	})
 
 	require.NoError(t, err)
 	require.Len(t, store.broadcast, 1)
 	assert.Equal(t, "tenant-a", store.broadcast[0].tenantID)
-	assert.Equal(t, eventTaskCreated, store.broadcast[0].eventType)
+	assert.Equal(t, "workflow."+eventTaskCreated, store.broadcast[0].eventType)
 }
 
 func TestFanoutService_Ingest_TaskEventWithDepartmentIDBroadcastsToDepartment(t *testing.T) {
 	store := &fakeEventStore{}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType: eventTaskCreated,
-		TenantID:  "tenant-a",
-		Payload:   []byte(`{"assignee_user_ids":["u1"],"department_id":"dept-a"}`),
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventTaskCreated,
+		TenantID: "tenant-a",
+		Payload:  []byte(`{"assignee_user_ids":["u1"],"department_id":"dept-a"}`),
 	})
 
 	require.NoError(t, err)
 	require.Len(t, store.department, 1)
 	assert.Equal(t, "tenant-a", store.department[0].tenantID)
 	assert.Equal(t, "dept-a", store.department[0].departmentID)
-	assert.Equal(t, eventTaskCreated, store.department[0].eventType)
+	assert.Equal(t, "workflow."+eventTaskCreated, store.department[0].eventType)
 }
 
 func TestFanoutService_Ingest_TaskEventWithoutDepartmentIDSkipsDepartmentWrite(t *testing.T) {
 	store := &fakeEventStore{}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType: eventTaskCreated,
-		TenantID:  "tenant-a",
-		Payload:   []byte(`{"assignee_user_ids":["u1"]}`),
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventTaskCreated,
+		TenantID: "tenant-a",
+		Payload:  []byte(`{"assignee_user_ids":["u1"]}`),
 	})
 
 	require.NoError(t, err)
@@ -150,10 +158,10 @@ func TestFanoutService_Ingest_TaskEventWithoutDepartmentIDSkipsDepartmentWrite(t
 
 func TestFanoutService_Ingest_ReassignedFansOutToExactlyOldAndNewAndDepartment(t *testing.T) {
 	store := &fakeEventStore{}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType:   eventTaskReassigned,
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventTaskReassigned,
 		TenantID:    "tenant-a",
 		Payload:     []byte(`{"old_user_id":"old-1","new_user_id":"new-1","department_id":"dept-a"}`),
 		RawEnvelope: []byte(`{}`),
@@ -170,10 +178,10 @@ func TestFanoutService_Ingest_ReassignedFansOutToExactlyOldAndNewAndDepartment(t
 
 func TestFanoutService_Ingest_InstanceEventRoutesToStartedByAndBroadcastsButNeverDepartment(t *testing.T) {
 	store := &fakeEventStore{}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType:   eventInstanceFinished,
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventInstanceFinished,
 		TenantID:    "tenant-a",
 		Payload:     []byte(`{"started_by_user_id":"starter-1"}`),
 		RawEnvelope: []byte(`{}`),
@@ -190,10 +198,10 @@ func TestFanoutService_Ingest_InstanceEventRoutesToStartedByAndBroadcastsButNeve
 
 func TestFanoutService_Ingest_SkipsEmptyRecipients(t *testing.T) {
 	store := &fakeEventStore{}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType:   eventInstanceFinished,
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventInstanceFinished,
 		TenantID:    "tenant-a",
 		Payload:     []byte(`{"started_by_user_id":""}`),
 		RawEnvelope: []byte(`{}`),
@@ -208,9 +216,9 @@ func TestFanoutService_Ingest_SkipsEmptyRecipients(t *testing.T) {
 
 func TestFanoutService_Ingest_UnknownEventType(t *testing.T) {
 	store := &fakeEventStore{}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{EventType: "user.deleted", Payload: []byte(`{}`)})
+	_, err := svc.Ingest(context.Background(), IngestInput{Source: workflowSource, EventType: "user.deleted", Payload: []byte(`{}`)})
 
 	assert.ErrorIs(t, err, ErrUnknownEventType)
 	assert.Empty(t, store.appended)
@@ -219,11 +227,11 @@ func TestFanoutService_Ingest_UnknownEventType(t *testing.T) {
 
 func TestFanoutService_Ingest_InvalidPayloadForKnownType(t *testing.T) {
 	store := &fakeEventStore{}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType: eventTaskCreated,
-		Payload:   []byte(`{"assignee_user_ids": "not-an-array"}`),
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventTaskCreated,
+		Payload: []byte(`{"assignee_user_ids": 7}`),
 	})
 
 	assert.ErrorIs(t, err, ErrInvalidPayload)
@@ -231,12 +239,12 @@ func TestFanoutService_Ingest_InvalidPayloadForKnownType(t *testing.T) {
 
 func TestFanoutService_Ingest_AbortsOnFirstPersonalWriteFailure(t *testing.T) {
 	store := &fakeEventStore{failOn: 2}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType: eventTaskCreated,
-		TenantID:  "tenant-a",
-		Payload:   []byte(`{"assignee_user_ids":["u1","u2","u3"]}`),
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventTaskCreated,
+		TenantID: "tenant-a",
+		Payload:  []byte(`{"assignee_user_ids":["u1","u2","u3"]}`),
 	})
 
 	require.Error(t, err)
@@ -254,12 +262,12 @@ func TestFanoutService_Ingest_AbortsOnBroadcastWriteFailure(t *testing.T) {
 	// One assignee (call 1), then the broadcast write (call 2) fails —
 	// the department write (which would be call 3) never happens.
 	store := &fakeEventStore{failOn: 2}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType: eventTaskCreated,
-		TenantID:  "tenant-a",
-		Payload:   []byte(`{"assignee_user_ids":["u1"],"department_id":"dept-a"}`),
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventTaskCreated,
+		TenantID: "tenant-a",
+		Payload:  []byte(`{"assignee_user_ids":["u1"],"department_id":"dept-a"}`),
 	})
 
 	require.Error(t, err)
@@ -272,12 +280,12 @@ func TestFanoutService_Ingest_AbortsOnDepartmentWriteFailure(t *testing.T) {
 	// One assignee (call 1), broadcast (call 2) both succeed; the
 	// department write (call 3) fails.
 	store := &fakeEventStore{failOn: 3}
-	svc := NewFanoutService(store)
+	svc := NewFanoutService(store, workflowTable(t))
 
-	err := svc.Ingest(context.Background(), IngestInput{
-		EventType: eventTaskCreated,
-		TenantID:  "tenant-a",
-		Payload:   []byte(`{"assignee_user_ids":["u1"],"department_id":"dept-a"}`),
+	_, err := svc.Ingest(context.Background(), IngestInput{
+		Source: workflowSource, EventType: eventTaskCreated,
+		TenantID: "tenant-a",
+		Payload:  []byte(`{"assignee_user_ids":["u1"],"department_id":"dept-a"}`),
 	})
 
 	require.Error(t, err)
@@ -316,14 +324,14 @@ func TestFanoutService_Ingest_EveryRenderedEventReachesItsRecipients(t *testing.
 		t.Run(tc.eventType, func(t *testing.T) {
 			store := &fakeEventStore{}
 
-			err := NewFanoutService(store).Ingest(context.Background(), IngestInput{
-				EventType: tc.eventType, TenantID: "tenant-a", Payload: []byte(tc.payload), RawEnvelope: []byte(`{}`),
+			_, err := NewFanoutService(store, workflowTable(t)).Ingest(context.Background(), IngestInput{
+				Source: workflowSource, EventType: tc.eventType, TenantID: "tenant-a", Payload: []byte(tc.payload), RawEnvelope: []byte(`{}`),
 			})
 
 			require.NoError(t, err)
 			var got []string
 			for _, e := range store.appended {
-				assert.Equal(t, tc.eventType, e.eventType)
+				assert.Equal(t, "workflow."+tc.eventType, e.eventType)
 				got = append(got, e.userID)
 			}
 			assert.Equal(t, tc.wantRecipients, got)
@@ -335,9 +343,8 @@ func TestFanoutService_Ingest_EveryRenderedEventReachesItsRecipients(t *testing.
 
 func TestFanoutService_Ingest_UnrenderedExecutionEventsAreUnknown(t *testing.T) {
 	for _, eventType := range []string{"WorkflowInstanceStarted", "WorkflowInstanceForceRouted"} {
-		assert.False(t, IsKnownEventType(eventType), eventType)
-		err := NewFanoutService(&fakeEventStore{}).Ingest(context.Background(), IngestInput{
-			EventType: eventType, TenantID: "tenant-a", Payload: []byte(`{}`), RawEnvelope: []byte(`{}`),
+		_, err := NewFanoutService(&fakeEventStore{}, workflowTable(t)).Ingest(context.Background(), IngestInput{
+			Source: workflowSource, EventType: eventType, TenantID: "tenant-a", Payload: []byte(`{}`), RawEnvelope: []byte(`{}`),
 		})
 		assert.ErrorIs(t, err, ErrUnknownEventType, eventType)
 	}

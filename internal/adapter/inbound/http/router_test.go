@@ -39,7 +39,7 @@ func testRouterConfig() RouterConfig {
 		AppEnv:        "test",
 		ValkeyClient:  unreachableValkeyClient(),
 		TicketHandler: NewTicketHandler(tickets),
-		EventsHandler: NewEventsHandler(usecase.NewFanoutService(nil)),
+		EventsHandler: NewEventsHandler(usecase.NewFanoutService(nil, loadShippedRoutes())),
 		StreamHandler: NewStreamHandler(usecase.NewStreamService(tickets, nil, nil, 5, time.Minute, 15*time.Second)),
 	}
 }
