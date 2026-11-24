@@ -23,6 +23,9 @@ func resolveTarget(route domain.Route, payload []byte) (target, error) {
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		return target{}, fmt.Errorf("%w: %v", ErrInvalidPayload, err)
 	}
+	if fields == nil {
+		return target{}, fmt.Errorf("%w: the payload must be a JSON object", ErrInvalidPayload)
+	}
 	var t target
 	for _, name := range route.Recipients {
 		ids, err := userIDs(fields[name])

@@ -47,6 +47,8 @@ type RoutingTable struct {
 
 var serviceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
+var eventTypePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
+
 func NewRoutingTable(f RoutingFile) (*RoutingTable, error) {
 	if f.Version != RoutingFormatVersion {
 		return nil, fmt.Errorf("version must be %d, got %d", RoutingFormatVersion, f.Version)
@@ -99,6 +101,9 @@ func checkService(name string, svc ServiceRoutes, sources map[string]string) err
 }
 
 func checkEvent(service, eventType string, ev EventRoute) error {
+	if !eventTypePattern.MatchString(eventType) {
+		return fmt.Errorf("service %q: event type %q must be letters, digits, dots, dashes and underscores", service, eventType)
+	}
 	if len(ev.Recipients) == 0 {
 		return fmt.Errorf("service %q event %q: at least one recipient field is required", service, eventType)
 	}

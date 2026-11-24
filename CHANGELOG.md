@@ -12,8 +12,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 - Routing comes from a routing file read at start-up (`config/routing.yaml`, `ROUTING_CONFIG_PATH`; the chart's `routing` values, mounted from a ConfigMap whose change rolls the pods). It holds one section per publishing service, matched by the envelope `source`, each listing its event types with their recipient fields and optional department field; the shipped `workflow` section reproduces the routing of the sixteen Execution Service types. A pair of source and type the file does not list is acknowledged with 200 and ignored. A malformed file fails start-up. Tender and LLM join as sections once their events are known.
 - The SSE `event:` line and the `event_type` metric labels are `<service>.<type>`, for example `workflow.WorkflowTaskCreated`.
-- A recipient field may hold one user ID or an array; a field of another type is refused with 400.
-- CI: marking a draft ready runs CI, adding or removing `skip-ci` re-runs the gate, and a draft, a documentation-only change or `skip-ci` skip the same way with every required check still reporting. The `paths-ignore` filters are gone. The PR summary counts a skipped run as passed. Images stay published on a version tag only (LLD rev 1.18).
+- A recipient field may hold one user ID or an array; a field of another type, or a payload that is not a JSON object (including `null`), is refused with 400.
+- CI: marking a draft ready runs CI, adding or removing `skip-ci` re-runs the gate, and a draft, a documentation-only change or `skip-ci` skip the same way with every required check still reporting. The `paths-ignore` filters are gone, and a change under `docs/observability/` (read by the metric and alert checks) is not treated as documentation only. The PR summary counts a skipped run as passed. Images stay published on a version tag only (LLD rev 1.18).
 
 ### Added
 

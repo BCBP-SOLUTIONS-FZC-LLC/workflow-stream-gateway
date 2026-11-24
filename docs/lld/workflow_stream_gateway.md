@@ -290,7 +290,7 @@ services:
 
 - An event is looked up by the envelope's `source` and `type`; two services may use the same type name. A pair the file does not list is acknowledged and ignored (§3.2).
 - A recipient field holds one user ID or an array of them; an empty value is skipped. Every listed event is written to the tenant-wide tier, and an event with a department field is also written to that department's tier.
-- The file is read once at start-up. A file with an unknown key, more than one document, a version other than 1, no services, a service name other than lowercase letters, digits and dashes, a service with no source or no events, a source shared by two services, or an event with no recipient field or a repeated one fails start-up.
+- The file is read once at start-up. A file with an unknown key, more than one document, a version other than 1, no services, a service name other than lowercase letters, digits and dashes, a service with no source or no events, a source shared by two services, or an event type that is not letters, digits, dots, dashes and underscores, or an event with no recipient field or a repeated one fails start-up.
 - A change reaches the pods by a rollout, which the chart triggers when the file changes; the service never re-reads the file while running.
 
 The tables below are the shipped `workflow` section.
@@ -472,7 +472,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 | Heartbeat interval | 15s | §7, §11 — provisional pending real ingress idle-timeout confirmation (Appendix B) |
 | `APP_ENV` | `dev` | One of `local`, `dev`, `test`, `staging`, `prod`; any other value fails startup |
 | `OTEL_SERVICE_NAME` | `workflow-stream-gateway` | The `service` metric label and trace service name |
-| `ROUTING_CONFIG_PATH` | `config/routing.yaml` | The routing file (§6); the chart mounts it from its `routing` values and rolls the pods when it changes |
+| `ROUTING_CONFIG_PATH` | `config/routing.yaml` | The routing file (§6); the image holds none, so it is always mounted: the chart mounts it from its `routing` values and rolls the pods when it changes |
 | Malformed values | startup fails | A number or duration that does not parse is an error, never a silent default |
 | `VALKEY_ADDR` / `VALKEY_PASSWORD` / `VALKEY_DIAL_TIMEOUT` / `VALKEY_READ_TIMEOUT` / `VALKEY_WRITE_TIMEOUT` | matches `event_consumer`'s own env-var naming | platform-wide Valkey client convention |
 

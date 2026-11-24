@@ -96,6 +96,7 @@ func TestFanoutService_Ingest_ReadsARecipientFieldAsOneIDOrAnArray(t *testing.T)
 func TestFanoutService_Ingest_RefusesAPayloadOfTheWrongShape(t *testing.T) {
 	for name, payload := range map[string]string{
 		"not an object":            `["u1"]`,
+		"null":                     `null`,
 		"not JSON":                 `{`,
 		"recipient is a number":    `{"assignee_user_ids":7}`,
 		"recipient array of mixed": `{"assignee_user_ids":["u1",2]}`,
@@ -110,6 +111,26 @@ func TestFanoutService_Ingest_RefusesAPayloadOfTheWrongShape(t *testing.T) {
 			assert.ErrorIs(t, err, ErrInvalidPayload)
 			assert.Empty(t, store.appended, "nothing is written for a payload that does not decode")
 			assert.Empty(t, store.broadcast)
+		})
+	}
+}
+
+func TestFanoutService_Ingest_AReassignmentWithNoOldAssigneeReachesOnlyTheNewOne(t *testing.T) {
+	for name, payload := range map[string]string{
+		"missing": `{"new_user_id":"new-1","department_id":"dept-a"}`,
+		"null":    `{"old_user_id":null,"new_user_id":"new-1","department_id":"dept-a"}`,
+		"empty":   `{"old_user_id":"","new_user_id":"new-1","department_id":"dept-a"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeEventStore{}
+
+			_, err := NewFanoutService(store, workflowTable(t)).Ingest(context.Background(),
+				IngestInput{Source: workflowSource, EventType: eventTaskReassigned, TenantID: "t", Payload: []byte(payload)})
+
+			require.NoError(t, err)
+			require.Len(t, store.appended, 1)
+			assert.Equal(t, "new-1", store.appended[0].userID)
+			assert.Len(t, store.department, 1)
 		})
 	}
 }

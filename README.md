@@ -92,7 +92,7 @@ A malformed number or duration fails startup rather than falling back to the def
 
 ### Routing file
 
-[config/routing.yaml](config/routing.yaml) decides which events are rendered and to whom: one section per publishing service, matched by the envelope `source`, each listing its event types with the payload fields that hold the recipients and, optionally, the department. A pair of source and type it does not list is acknowledged with 200 and ignored. The browser receives each event as `<service>.<type>`, for example `workflow.WorkflowTaskCreated`. The file is read at start-up and a malformed one fails startup; the chart carries the same content as its `routing` values (a test checks they match) and rolls the pods when it changes.
+[config/routing.yaml](config/routing.yaml) decides which events are rendered and to whom: one section per publishing service, matched by the envelope `source`, each listing its event types with the payload fields that hold the recipients and, optionally, the department. A pair of source and type it does not list is acknowledged with 200 and ignored. The browser receives each event as `<service>.<type>`, for example `workflow.WorkflowTaskCreated`. The image does not contain the file: mount it and set `ROUTING_CONFIG_PATH`, as the chart, docker compose and the smoke test do. The file is read at start-up and a missing or malformed one fails startup; the chart carries the same content as its `routing` values (a test checks they match) and rolls the pods when it changes.
 
 To add a publishing service, add a section with its `source` and events to both files, then add its queue and routes to the event consumer's topology.
 

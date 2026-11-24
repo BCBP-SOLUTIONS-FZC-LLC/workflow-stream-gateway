@@ -94,6 +94,12 @@ func TestNewRoutingTable_RefusesABrokenFile(t *testing.T) {
 			s.Events = nil
 			f.Services["tender"] = s
 		}, `service "tender": at least one event`},
+		"event type with a space": {func(f *RoutingFile) {
+			f.Services["tender"].Events["Tender Awarded"] = EventRoute{Recipients: []string{"x"}}
+		}, `service "tender": event type "Tender Awarded"`},
+		"event type with a newline": {func(f *RoutingFile) {
+			f.Services["tender"].Events["TenderAwarded\ndata: x"] = EventRoute{Recipients: []string{"x"}}
+		}, `service "tender": event type`},
 		"empty event type": {func(f *RoutingFile) {
 			f.Services["tender"].Events[""] = EventRoute{Recipients: []string{"x"}}
 		}, `service "tender": an event type is empty`},
