@@ -97,11 +97,8 @@ func toFramesFrom(sourceKey string, entries []redis.XMessage) []domain.Frame {
 	for _, e := range entries {
 		eventType, _ := e.Values["event"].(string)
 		var data []byte
-		switch v := e.Values["data"].(type) {
-		case string:
+		if v, ok := e.Values["data"].(string); ok {
 			data = []byte(v)
-		case []byte:
-			data = v
 		}
 		frames = append(frames, domain.Frame{ID: e.ID, EventType: eventType, Data: data, SourceKey: sourceKey})
 	}

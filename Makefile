@@ -32,11 +32,13 @@ LDFLAGS       := -X main.version=$(BUILD_VERSION)
 
 COVER_PROFILE   := $(COVERAGE_DIR)/coverage.out
 COVER_HTML      := $(COVERAGE_DIR)/coverage.html
-COVER_THRESHOLD := 90
+COVER_THRESHOLD := 97
 
 # internal/observability keeps the error-wrapping branches of the telemetry
 # initialisation, which fail only when a platform library refuses its own identity.
-COVER_PKG_FLOORS := internal/observability:85
+# cmd/server keeps main itself (it exits the process), and the logger, telemetry,
+# Valkey close and listener shutdown failures, which no test can provoke.
+COVER_PKG_FLOORS := internal/observability:90 cmd/server:85
 
 .PHONY: test-integration merge-coverage helm-lint helm-test helm-policy-check helm-namespace-check helm-authz-check lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
         cover cover-func cover-html cover-check cover-check-pkg \

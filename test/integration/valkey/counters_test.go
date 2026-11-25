@@ -57,6 +57,17 @@ func TestTicketStore_TheMintRateCounterAlwaysCarriesItsWindow(t *testing.T) {
 	assert.Greater(t, ttl, time.Duration(0), "a counter without an expiry would refuse the user for good once it reaches the limit")
 }
 
+func TestEventStore_AFailedExpiryIsReported(t *testing.T) {
+	client := newClient(t)
+	client.AddHook(&failFirstExpire{})
+	events := valkey.NewEventStore(client, 10*time.Minute, 15*time.Minute)
+
+	err := events.AppendEvent(context.Background(), "t1", "u1", "WorkflowTaskCreated", []byte(`{}`))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "valkey expire")
+}
+
 func TestConnectionLimiter_AFailedAcquireNeverLeavesACounterWithoutExpiry(t *testing.T) {
 	client := newClient(t)
 	client.AddHook(&failFirstExpire{})

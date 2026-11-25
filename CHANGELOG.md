@@ -19,7 +19,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Changed
 
-- `make test` and `make test-integration` run and count `cmd/`, which no target ran before; start-up, shutdown and exit codes of the server are tested.
+- `make test` and `make test-integration` run and count `cmd/`, which no target ran before, and the integration run also includes integration-tagged tests under `internal/`; start-up, shutdown and exit codes of the server are tested.
+- The coverage gate is 97% overall and per package (from 90%), with lower floors only for `internal/observability` (90) and `cmd/server` (85), whose remaining lines exit the process or fail only when a platform library refuses its own identity.
 - Tests: request-body limit, readiness, unmatched routes, ticket edge cases, stream failures, metric pre-initialisation and Valkey adapter boundaries. The Valkey integration test that slept before appending now waits until the reader is blocked.
 - The OpenAPI envelope `type` no longer lists the old twelve dotted-lowercase types: a type is PascalCase and matched with `source` against the routing file, and a type its section does not list is accepted and ignored with 200.
 - CI: the PR summary reports a failed or cancelled gate as failed instead of "All checks passed", and counts a run as skipped only when the gate says so.
