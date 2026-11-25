@@ -144,6 +144,13 @@ networkPolicy:
       kubernetes.io/metadata.name: observability
     podSelector:
       app.kubernetes.io/name: prometheus
+  # Callers of the API port from other namespaces, each a namespace and pod selector pair. PLACEHOLDER,
+  # confirm with Platform: the LLM subsystem's consumer (POST /api/v1/internal/events).
+  otherNamespaceCallers:
+    - namespaceSelector:
+        kubernetes.io/metadata.name: llm
+      podSelector:
+        app.kubernetes.io/name: llm-retrieval-generation
   additionalIngressRules: []
   additionalEgressRules: []
 
@@ -170,6 +177,9 @@ authorizationPolicy:
       callers:
         - namespace: workflow-app
           serviceAccount: workflow-events-consumer
+        # The LLM subsystem's own consumer forwards its generation events; its namespace is Platform's to set.
+        - namespace: llm
+          serviceAccount: llm-retrieval-generation
 
 prometheusRule:
   enabled: false
@@ -232,3 +242,46 @@ ingress:
   className: ""
   annotations: {}
   tls: []
+
+# Routing file (LLD §6): one section per publishing service, keyed by the envelope
+# source; must equal config/routing.yaml (a chart test checks it). Changing it rolls
+# the pods.
+routing:
+  version: 1
+  services:
+    workflow:
+      source: workflow-execution-svc
+      callers: [workflow-app/workflow-events-consumer]
+      tenant_admins: true
+      events:
+        - WorkflowTaskCreated
+        - WorkflowTaskClaimed
+        - WorkflowTaskCompleted
+        - WorkflowTaskDeferred
+        - WorkflowTaskReassigned
+        - WorkflowTaskSuperseded
+        - WorkflowTaskFailed
+        - WorkflowTaskSlaWarning
+        - WorkflowTaskSlaBreached
+        - WorkflowInstancePaused
+        - WorkflowInstanceResumed
+        - WorkflowInstanceCancelled
+        - WorkflowInstanceTerminated
+        - WorkflowInstanceDegraded
+        - WorkflowInstanceFailed
+        - WorkflowInstanceFinished
+    llm:
+      source: llm-retrieval-generation
+      callers: [llm/llm-retrieval-generation]
+      tenant_admins: false
+      events:
+        - GenerationStarted
+        - GenerationProgressed
+        - OutlineReady
+        - SectionCompleted
+        - GenerationCompleted
+        - GenerationFailed
+        - GenerationCancelled
+        - GenerationGapReported
+        - ArtefactRegenerated
+        - ExtractionCompleted

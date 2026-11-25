@@ -29,8 +29,10 @@ module.exports = async function prSummary({ github, context }) {
   const jobResults = JSON.parse(process.env.JOB_RESULTS || "{}");
   const coveragePct = process.env.COVERAGE_PCT || "n/a";
   const coverageMin = process.env.COVERAGE_MIN;
+  const measured = !Number.isNaN(parseFloat(coveragePct));
+  const coverageIcon = !measured ? "⏭️" : parseFloat(coveragePct) >= parseFloat(coverageMin) ? "✅" : "❌";
   const coverageRow = coverageMin
-    ? `| ${parseFloat(coveragePct) >= parseFloat(coverageMin) ? "✅" : "❌"} | Coverage ≥ ${coverageMin}% | \`${coveragePct}\` |`
+    ? `| ${coverageIcon} | Coverage ≥ ${coverageMin}% | \`${coveragePct}\` |`
     : `| | Total coverage (the tests job holds each package to its floor) | \`${coveragePct}\` |`;
 
   const rows = JOB_LABELS.filter(([id]) => jobResults[id])
@@ -42,10 +44,13 @@ module.exports = async function prSummary({ github, context }) {
 
   const allPassed = JOB_LABELS
     .filter(([id]) => jobResults[id])
-    .every(([id]) => jobResults[id].result === "success");
-  const headline = allPassed
-    ? "✅ All checks passed — ready to merge"
-    : "❌ Some checks failed";
+    .every(([id]) => ["success", "skipped"].includes(jobResults[id].result));
+  const ranAny = process.env.CI_SKIPPED !== "true";
+  const headline = !allPassed
+    ? "❌ Some checks failed"
+    : ranAny
+      ? "✅ All checks passed — ready to merge"
+      : "⏭️ Checks skipped (draft, documentation only or skip-ci)";
 
   const body = [
     MARKER,

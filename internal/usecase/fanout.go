@@ -5,112 +5,64 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/domain"
 )
-
-const (
-	eventTaskCreated        = "WorkflowTaskCreated"
-	eventTaskClaimed        = "WorkflowTaskClaimed"
-	eventTaskCompleted      = "WorkflowTaskCompleted"
-	eventTaskDeferred       = "WorkflowTaskDeferred"
-	eventTaskReassigned     = "WorkflowTaskReassigned"
-	eventTaskSuperseded     = "WorkflowTaskSuperseded"
-	eventTaskFailed         = "WorkflowTaskFailed"
-	eventTaskSLAWarning     = "WorkflowTaskSlaWarning"
-	eventTaskSLABreached    = "WorkflowTaskSlaBreached"
-	eventInstancePaused     = "WorkflowInstancePaused"
-	eventInstanceResumed    = "WorkflowInstanceResumed"
-	eventInstanceCancelled  = "WorkflowInstanceCancelled"
-	eventInstanceTerminated = "WorkflowInstanceTerminated"
-	eventInstanceDegraded   = "WorkflowInstanceDegraded"
-	eventInstanceFailed     = "WorkflowInstanceFailed"
-	eventInstanceFinished   = "WorkflowInstanceFinished"
-)
-
-var taskAssigneeEvents = map[string]bool{
-	eventTaskCreated:     true,
-	eventTaskClaimed:     true,
-	eventTaskCompleted:   true,
-	eventTaskDeferred:    true,
-	eventTaskSuperseded:  true,
-	eventTaskFailed:      true,
-	eventTaskSLAWarning:  true,
-	eventTaskSLABreached: true,
-}
-
-var instanceEvents = map[string]bool{
-	eventInstancePaused:     true,
-	eventInstanceResumed:    true,
-	eventInstanceCancelled:  true,
-	eventInstanceTerminated: true,
-	eventInstanceDegraded:   true,
-	eventInstanceFailed:     true,
-	eventInstanceFinished:   true,
-}
-
-func KnownEventTypes() []string {
-	return []string{
-		eventTaskCreated, eventTaskClaimed, eventTaskCompleted, eventTaskDeferred, eventTaskReassigned,
-		eventTaskSuperseded, eventTaskFailed, eventTaskSLAWarning, eventTaskSLABreached,
-		eventInstancePaused, eventInstanceResumed, eventInstanceCancelled, eventInstanceTerminated,
-		eventInstanceDegraded, eventInstanceFailed, eventInstanceFinished,
-	}
-}
-
-func isTaskScoped(eventType string) bool {
-	return taskAssigneeEvents[eventType] || eventType == eventTaskReassigned
-}
 
 var ErrUnknownEventType = errors.New("unknown event type")
 
 var ErrInvalidPayload = errors.New("event payload does not match expected schema for its type")
 
-func IsKnownEventType(eventType string) bool {
-	return taskAssigneeEvents[eventType] || instanceEvents[eventType] || eventType == eventTaskReassigned
-}
+var ErrCallerNotAllowed = errors.New("the caller may not publish for this source")
 
-type taskAssigneePayload struct {
-	AssigneeUserIDs []string `json:"assignee_user_ids"`
-	DepartmentID    string   `json:"department_id"`
-}
+type CallerCheck bool
 
-type reassignedPayload struct {
-	OldUserID    string `json:"old_user_id"`
-	NewUserID    string `json:"new_user_id"`
-	DepartmentID string `json:"department_id"`
-}
-
-type instanceStartedByPayload struct {
-	StartedByUserID string `json:"started_by_user_id"`
-}
+const (
+	CallerCheckOn  CallerCheck = true
+	CallerCheckOff CallerCheck = false
+)
 
 type target struct {
-	recipients   []string
-	departmentID string
+	users       []string
+	departments []string
 }
 
-func resolveTarget(eventType string, payload []byte) (target, error) {
-	switch {
-	case eventType == eventTaskReassigned:
-		var p reassignedPayload
-		if err := json.Unmarshal(payload, &p); err != nil {
-			return target{}, fmt.Errorf("%w: %v", ErrInvalidPayload, err)
-		}
-		return target{recipients: []string{p.OldUserID, p.NewUserID}, departmentID: p.DepartmentID}, nil
-	case taskAssigneeEvents[eventType]:
-		var p taskAssigneePayload
-		if err := json.Unmarshal(payload, &p); err != nil {
-			return target{}, fmt.Errorf("%w: %v", ErrInvalidPayload, err)
-		}
-		return target{recipients: p.AssigneeUserIDs, departmentID: p.DepartmentID}, nil
-	case instanceEvents[eventType]:
-		var p instanceStartedByPayload
-		if err := json.Unmarshal(payload, &p); err != nil {
-			return target{}, fmt.Errorf("%w: %v", ErrInvalidPayload, err)
-		}
-		return target{recipients: []string{p.StartedByUserID}}, nil
-	default:
-		return target{}, ErrUnknownEventType
+func resolveTarget(payload []byte) (target, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return target{}, fmt.Errorf("%w: %v", ErrInvalidPayload, err)
 	}
+	if fields == nil {
+		return target{}, fmt.Errorf("%w: the payload must be a JSON object", ErrInvalidPayload)
+	}
+	raw := fields["recipients"]
+	if len(raw) == 0 || string(raw) == "null" {
+		return target{}, fmt.Errorf("%w: recipients is required", ErrInvalidPayload)
+	}
+	var entries []*domain.Recipient
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return target{}, fmt.Errorf("%w: recipients must be a list of {kind, id}: %v", ErrInvalidPayload, err)
+	}
+	var t target
+	seen := map[domain.Recipient]bool{}
+	for i, entry := range entries {
+		if entry == nil {
+			return target{}, fmt.Errorf("%w: recipients[%d] must be an object", ErrInvalidPayload, i)
+		}
+		if err := entry.Validate(); err != nil {
+			return target{}, fmt.Errorf("%w: recipients[%d]: %v", ErrInvalidPayload, i, err)
+		}
+		if seen[*entry] {
+			continue
+		}
+		seen[*entry] = true
+		if entry.Kind == domain.RecipientUser {
+			t.users = append(t.users, entry.ID)
+		} else {
+			t.departments = append(t.departments, entry.ID)
+		}
+	}
+	return t, nil
 }
 
 type EventStreamStore interface {
@@ -120,6 +72,8 @@ type EventStreamStore interface {
 }
 
 type IngestInput struct {
+	Source      string
+	Caller      string
 	EventType   string
 	TenantID    string
 	Payload     []byte
@@ -127,37 +81,46 @@ type IngestInput struct {
 }
 
 type FanoutService struct {
-	store EventStreamStore
+	store       EventStreamStore
+	routes      *domain.RoutingTable
+	callerCheck CallerCheck
 }
 
-func NewFanoutService(store EventStreamStore) *FanoutService {
-	return &FanoutService{store: store}
+func NewFanoutService(store EventStreamStore, routes *domain.RoutingTable, callerCheck CallerCheck) *FanoutService {
+	return &FanoutService{store: store, routes: routes, callerCheck: callerCheck}
 }
 
-func (s *FanoutService) Ingest(ctx context.Context, in IngestInput) error {
-	t, err := resolveTarget(in.EventType, in.Payload)
+func (s *FanoutService) Ingest(ctx context.Context, in IngestInput) (string, error) {
+	route, ok := s.routes.Lookup(in.Source, in.EventType)
+	if !ok {
+		return "", ErrUnknownEventType
+	}
+	name := route.StreamEventType()
+	if s.callerCheck == CallerCheckOn && !route.Admits(in.Caller) {
+		return name, ErrCallerNotAllowed
+	}
+	t, err := resolveTarget(in.Payload)
 	if err != nil {
-		return err
+		return name, err
 	}
 
-	for _, userID := range t.recipients {
-		if userID == "" {
-			continue
-		}
-		if err := s.store.AppendEvent(ctx, in.TenantID, userID, in.EventType, in.RawEnvelope); err != nil {
-			return fmt.Errorf("append event: %w", err)
+	for _, userID := range t.users {
+		if err := s.store.AppendEvent(ctx, in.TenantID, userID, name, in.RawEnvelope); err != nil {
+			return name, fmt.Errorf("append event: %w", err)
 		}
 	}
 
-	if err := s.store.AppendBroadcastEvent(ctx, in.TenantID, in.EventType, in.RawEnvelope); err != nil {
-		return fmt.Errorf("append broadcast event: %w", err)
-	}
-
-	if isTaskScoped(in.EventType) && t.departmentID != "" {
-		if err := s.store.AppendDepartmentEvent(ctx, in.TenantID, t.departmentID, in.EventType, in.RawEnvelope); err != nil {
-			return fmt.Errorf("append department event: %w", err)
+	if route.TenantAdmins {
+		if err := s.store.AppendBroadcastEvent(ctx, in.TenantID, name, in.RawEnvelope); err != nil {
+			return name, fmt.Errorf("append broadcast event: %w", err)
 		}
 	}
 
-	return nil
+	for _, departmentID := range t.departments {
+		if err := s.store.AppendDepartmentEvent(ctx, in.TenantID, departmentID, name, in.RawEnvelope); err != nil {
+			return name, fmt.Errorf("append department event: %w", err)
+		}
+	}
+
+	return name, nil
 }

@@ -18,7 +18,11 @@ services:
     container_name: workflow-stream-gateway-app
     environment:
       APP_ENV: dev
+      CALLER_IDENTITY_CHECK: "false"
       VALKEY_ADDR: valkey:6379
+      ROUTING_CONFIG_PATH: /etc/workflow-stream-gateway/routing.yaml
+    volumes:
+      - ./config/routing.yaml:/etc/workflow-stream-gateway/routing.yaml:ro
     ports:
       - "8080:8080"
     depends_on:

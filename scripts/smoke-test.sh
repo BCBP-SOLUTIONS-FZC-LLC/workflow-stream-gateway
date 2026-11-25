@@ -34,8 +34,10 @@ fi
 docker network create "$net" >/dev/null
 docker run -d --name "$net-valkey" --network "$net" valkey/valkey:8-alpine >/dev/null
 docker run -d --name "$net-gw" --network "$net" -p "$port:8080" \
-  -e APP_ENV=test -e VALKEY_ADDR="$net-valkey:6379" \
+  -e APP_ENV=test -e CALLER_IDENTITY_CHECK=false -e VALKEY_ADDR="$net-valkey:6379" \
   -e OTEL_EXPORTER_OTLP_ENDPOINT=none \
+  -e ROUTING_CONFIG_PATH=/etc/workflow-stream-gateway/routing.yaml \
+  -v "$PWD/config/routing.yaml:/etc/workflow-stream-gateway/routing.yaml:ro" \
   "$image" >/dev/null
 
 base="http://localhost:$port"
@@ -62,7 +64,7 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/v1/internal/e
 [ "$status" = 401 ] || [ "$status" = 403 ] || { echo "smoke: the internal route answered $status without the system caller identity"; exit 1; }
 
 id=$(uuidgen | tr '[:upper:]' '[:lower:]')
-event=$(printf '{"id":"%s","type":"WorkflowTaskCreated","source":"workflow-execution-service","time":"%s","tenant_id":"%s","data":{"assignee_user_ids":["%s"],"department_id":"%s"}}' \
+event=$(printf '{"id":"%s","type":"WorkflowTaskCreated","source":"workflow-execution-svc","time":"%s","tenant_id":"%s","data":{"recipients":[{"kind":"user","id":"%s"},{"kind":"department","id":"%s"}]}}' \
   "$id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tenant" "$user" "$(uuidgen | tr '[:upper:]' '[:lower:]')")
 status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/v1/internal/events" \
   -H "x-user-id: iam-system" -H "x-tenant-roles: iam-system" -H "Content-Type: application/json" -d "$event")
@@ -75,4 +77,5 @@ done
 kill "$reader" 2>/dev/null || true
 wait "$reader" 2>/dev/null || true
 [ "${delivered:-0}" = 1 ] || { echo "smoke: the stream never carried event $id"; cat "$stream_out"; exit 1; }
+grep -q '^event: workflow.WorkflowTaskCreated$' "$stream_out" || { echo "smoke: the frame is not named workflow.WorkflowTaskCreated"; cat "$stream_out"; exit 1; }
 echo "smoke: event $id reached the user's stream"

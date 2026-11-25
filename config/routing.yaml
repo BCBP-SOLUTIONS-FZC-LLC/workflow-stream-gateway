@@ -1,0 +1,52 @@
+# Routing file of the Workflow Stream Gateway (LLD §6).
+#
+# One section per publishing service. The envelope's `source` field picks the
+# section, and the event type picks the entry. A (source, type) pair that is not
+# listed is acknowledged with 200 and ignored. Every listed event names its
+# readers in the payload's `recipients` list of {kind, id}: a `user` entry
+# reaches that user, a `department` entry reaches that department's tier.
+# `callers` names the mesh identities (<namespace>/<service account>) allowed to
+# post the section's events; another caller is refused with 403.
+# `tenant_admins` says whether the service's events also reach the tenant's
+# administrators. The browser receives each event as `<service>.<type>`.
+#
+# The chart carries the same content as `routing` values; a test fails when
+# they differ.
+version: 1
+services:
+  workflow:
+    source: workflow-execution-svc
+    callers: [workflow-app/workflow-events-consumer]
+    tenant_admins: true
+    events:
+      - WorkflowTaskCreated
+      - WorkflowTaskClaimed
+      - WorkflowTaskCompleted
+      - WorkflowTaskDeferred
+      - WorkflowTaskReassigned
+      - WorkflowTaskSuperseded
+      - WorkflowTaskFailed
+      - WorkflowTaskSlaWarning
+      - WorkflowTaskSlaBreached
+      - WorkflowInstancePaused
+      - WorkflowInstanceResumed
+      - WorkflowInstanceCancelled
+      - WorkflowInstanceTerminated
+      - WorkflowInstanceDegraded
+      - WorkflowInstanceFailed
+      - WorkflowInstanceFinished
+  llm:
+    source: llm-retrieval-generation
+    callers: [llm/llm-retrieval-generation]
+    tenant_admins: false
+    events:
+      - GenerationStarted
+      - GenerationProgressed
+      - OutlineReady
+      - SectionCompleted
+      - GenerationCompleted
+      - GenerationFailed
+      - GenerationCancelled
+      - GenerationGapReported
+      - ArtefactRegenerated
+      - ExtractionCompleted

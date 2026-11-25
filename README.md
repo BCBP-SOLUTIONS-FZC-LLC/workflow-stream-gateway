@@ -17,9 +17,9 @@ Browser ──ticket mint──► Stream Gateway ◄──SSE stream (ticket)�
 | Concern | What this service owns | What it does NOT own |
 | --- | --- | --- |
 | **Tickets** | Minting a short-lived ticket from the gateway identity headers, rate-limited per user | Authentication: the gateway validates the JWT and injects the identity |
-| **Fan-out** | Appending each forwarded event to the Valkey Stream of every recipient it concerns | Deciding what an event means: the Execution Service owns the payloads |
+| **Fan-out** | Appending each forwarded event to the Valkey Stream of every user and department its `recipients` list names | Deciding who an event concerns or what it means: each publisher owns its payloads |
 | **Streaming** | Backfill from a resume cursor, live tail, heartbeats, the per-user connection cap | Delivery guarantees beyond the retention window: a late client gets a resync marker |
-| **Ingestion** | The internal endpoint the shared consumer forwards to | Consuming SQS, dedup and retries: the Workflow-Events Consumer owns them |
+| **Ingestion** | The internal endpoint the publishers' consumers forward to | Consuming SQS, dedup and retries: the forwarding consumer owns them |
 
 **Source of truth for two contracts:** the HTTP surface in [docs/swagger/openapi.yaml](docs/swagger/openapi.yaml) and the consumed event types in [api/asyncapi.yaml](api/asyncapi.yaml).
 
@@ -86,8 +86,16 @@ make dev       # reads .env
 | `STREAM_RETENTION_WINDOW` / `STREAM_KEY_TTL` | `10m` / `15m` | The key lifetime must exceed the retention window |
 | `CONNECTION_CAP_PER_USER` | `5` | Concurrent streams per tenant and user |
 | `HEARTBEAT_INTERVAL` | `15s` | |
+| `ROUTING_CONFIG_PATH` | `config/routing.yaml` | The routing file; the chart mounts it from its `routing` values |
+| `CALLER_IDENTITY_CHECK` | `true` | Each routing section accepts only its own callers, read from the mesh's `X-Forwarded-Client-Cert`; `false` only with `APP_ENV` `local`, `dev` or `test` (docker compose and the smoke test) |
 
 A malformed number or duration fails startup rather than falling back to the default.
+
+### Routing file
+
+[config/routing.yaml](config/routing.yaml) decides which events are rendered and to whom: one section per publishing service, matched by the envelope `source`, each with its `callers` (the mesh identities, `<namespace>/<service account>`, allowed to post its events; another caller gets 403), `tenant_admins` (whether its events also reach the tenant's administrators) and its event types. Every routed payload names its readers in a required `recipients` list of `{kind, id}`, `kind` `user` or `department` and `id` a lower-case UUID; another shape is refused with 400. A pair of source and type it does not list is acknowledged with 200 and ignored. The browser receives each event as `<service>.<type>`, for example `workflow.WorkflowTaskCreated`. The image does not contain the file: mount it and set `ROUTING_CONFIG_PATH`, as the chart, docker compose and the smoke test do. The file is read at start-up and a missing or malformed one fails startup; the chart carries the same content as its `routing` values (a test checks they match) and rolls the pods when it changes.
+
+To add a publishing service, add a section with its `source`, `callers`, `tenant_admins` and events to both files, and document its messages in `api/asyncapi.yaml`. Its consumer then needs a caller entry in the chart's `authorizationPolicy.internalRoutes` and, from another namespace, `networkPolicy.otherNamespaceCallers`; a service that uses the shared Workflow-Events Consumer needs its queue and routes in that consumer's topology instead.
 
 ---
 
@@ -118,9 +126,9 @@ Dependency direction is `domain ← usecase ← adapter`, enforced by `.go-arch-
 | --- | --- | --- |
 | `POST /api/v1/stream/tickets` | Browser through the gateway | Gateway identity headers required |
 | `GET /api/v1/stream` | Browser `EventSource` | Authenticated by the ticket in the query; resumes from `Last-Event-ID` |
-| `POST /api/v1/internal/events` | The Workflow-Events Consumer | System caller identity (`x-user-id` and `x-tenant-roles: iam-system`), else `401`; unknown types are acknowledged with 200 |
+| `POST /api/v1/internal/events` | The Workflow-Events Consumer and the LLM subsystem's consumer | System caller identity (`x-user-id` and `x-tenant-roles: iam-system`), else `401`; a pair of source and type the routing file does not list is acknowledged with 200 |
 
-Tests fail when the OpenAPI and the router list different operations, or the AsyncAPI and the routed event types differ.
+Tests fail when the OpenAPI and the router list different operations, or the AsyncAPI channels and the routing file's sections list different event types.
 
 ---
 
@@ -155,7 +163,7 @@ Every series carries `domain` (`workflow`), `service` (`workflow-stream-gateway`
 
 ## CI
 
-Pull requests and pushes run `ci.yml`: a `ci-gate` job skips draft pull requests and those labelled `skip-ci`, then `validate-quality` and `validate-test`, an image job that lints the Dockerfile and builds the image, a Trivy scan for fixable HIGH and CRITICAL findings, and a smoke test (`make smoke-test`) that runs the image against Valkey, mints a ticket, opens a stream and checks that an ingested event reaches it. Pull requests that change only Markdown or `docs/` skip CI. `changelog-check.yml` requires a CHANGELOG entry on pull requests that touch code or contracts.
+Pull requests and pushes run `ci.yml`: a `ci-gate` job decides whether to skip (a draft, a change to documentation only, or the `skip-ci` label), then `validate-quality` and `validate-test`, an image job that lints the Dockerfile and builds the image, a Trivy scan for fixable HIGH and CRITICAL findings, and a smoke test (`make smoke-test`) that runs the image against Valkey, mints a ticket, opens a stream and checks that an ingested event reaches it. A skipped run still reports every required check as skipped, so nothing is left waiting, and marking a draft ready starts CI. `changelog-check.yml` requires a CHANGELOG entry on pull requests that touch code or contracts.
 
 ## Versioning and releases
 

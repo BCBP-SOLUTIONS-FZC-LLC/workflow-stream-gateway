@@ -2,6 +2,12 @@ name: Validate / Test
 
 "on":
   workflow_call:
+    inputs:
+      skip:
+        description: 'True for a draft, a documentation-only change or a PR with the skip-ci label; every job then reports skipped, so the required checks pass instead of waiting'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -15,6 +21,7 @@ env:
 jobs:
   test:
     name: test
+    if: ${{ !inputs.skip }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -140,10 +140,11 @@ components:
       type: object
       description: >
         The canonical platform-events wire envelope (platform-events/v2/pkg/events/envelope.go),
-        forwarded verbatim by event_consumer. Payload (`data`) is opaque here — this
-        service dispatches on `type` without a strict per-type schema, matching the
-        platform-wide /api/v1/internal/events convention (unrecognized types are accepted
-        and ignored with 200).
+        forwarded verbatim by the publisher's consumer. Payload (`data`) is opaque here — this
+        service looks up the pair of `source` and `type` in its routing file and reads
+        only the payload's `recipients` list of {kind, id}, matching the
+        platform-wide /api/v1/internal/events convention (a pair the routing file does
+        not list is accepted and ignored with 200).
       required: [id, type, source, time]
       properties:
         id:
@@ -194,7 +195,7 @@ components:
           format: date-time
         data:
           type: object
-          description: Event-type-specific payload; opaque to this service beyond recipient-field extraction (§6 of the LLD).
+          description: Event-type-specific payload; opaque to this service beyond its `recipients` list (§6 of the LLD).
 
 paths:
   /healthz:
@@ -305,8 +306,10 @@ paths:
       responses:
         "200":
           description: >
-            SSE stream opened. Each frame's `data:` is a verbatim platform-events
-            Envelope (see workflow_stream_gateway.md §7 for the exact wire shape);
+            SSE stream opened. Each frame's `event:` is `<service>.<type>` (for
+            example `workflow.WorkflowTaskCreated`) and its `data:` is a verbatim
+            platform-events Envelope (see workflow_stream_gateway.md §7 for the exact
+            wire shape);
             a `: keep-alive` comment every 15s; on backfill-window exhaustion, a
             control frame `event: resync-required`.
           headers:
@@ -365,16 +368,29 @@ paths:
       responses:
         "200":
           description: >
-            Every recipient's XADD succeeded, or the event type was unrecognized
-            (accepted and ignored).
+            Every XADD for the event's recipients succeeded, or the routing file does not list the
+            pair of source and type (accepted and ignored).
         "400":
-          description: Malformed envelope (unparseable JSON, or missing id/type/source/time). Non-retryable.
+          description: >
+            Malformed envelope (unparseable JSON, or missing id/type/source/time), or a
+            payload that is not a JSON object, a missing or null `recipients`, a `recipients`
+            that is not a list, or an entry that is not {kind: user or department, id: a
+            lower-case UUID}.
+            Non-retryable.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
         "401":
           description: Missing or invalid internal caller identity.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "403":
+          description: >
+            The caller's mesh identity (the last element of X-Forwarded-Client-Cert, set by the
+            sidecar) is not among the callers the routing file names for the event's source.
           content:
             application/problem+json:
               schema:

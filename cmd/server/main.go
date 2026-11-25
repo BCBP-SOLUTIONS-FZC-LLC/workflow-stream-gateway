@@ -12,6 +12,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/routingfile"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/valkey"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability"
@@ -48,6 +49,11 @@ func main() {
 }
 
 func run(cfg *config.Config, log Logger) error {
+	routes, err := routingfile.Load(cfg.RoutingConfigPath)
+	if err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ValkeyDialTimeout)
 	client, err := valkey.NewClient(ctx, valkey.Options{
 		Addr:         cfg.ValkeyAddr,
@@ -75,7 +81,7 @@ func run(cfg *config.Config, log Logger) error {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           newRouter(cfg, ginCfg, client),
+		Handler:           newRouter(cfg, ginCfg, client, routes),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}

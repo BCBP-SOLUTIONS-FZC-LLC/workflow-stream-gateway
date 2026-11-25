@@ -289,7 +289,7 @@ helm-policy-check:
 helm-test:
 	go test -count=1 ./test/chart/...
 
-## helm-authz-check: The AuthorizationPolicy admits only the event consumer on the internal routes and renders only when enabled
+## helm-authz-check: The AuthorizationPolicy admits only the named event consumers on the internal routes and renders only when enabled
 helm-authz-check:
 	@render() { $(HELM) template x deploy/helm $(HELM_LINT_VALUES) -s templates/authorizationpolicy.yaml "$$@"; }; \
 	render | grep -q 'sa/workflow-events-consumer' \
