@@ -43,7 +43,7 @@ COVER_PKG_FLOORS := internal/observability:90 cmd/server:85
 .PHONY: test-integration merge-coverage helm-lint helm-test helm-policy-check helm-namespace-check helm-authz-check lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
         cover cover-func cover-html cover-check cover-check-pkg \
         tidy fmt-check fix check lint lint-fix arch-lint vuln \
-        docker-build docker-lint docker-trivy docker-check smoke-test \
+        docker-build docker-lint docker-trivy docker-check smoke-test fuzz hurl fuzz-api fuzz-internal-api \
         clean help
 
 all: build
@@ -123,6 +123,51 @@ test-integration:
 	    -coverpkg=./internal/...,./cmd/... \
 	    -coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
 	    ./test/integration/... ./cmd/... ./internal/...
+
+## fuzz: Fuzz every parser of untrusted input for FUZZTIME each (default 1m); the seed inputs run in every `make test`
+FUZZTIME ?= 1m
+fuzz:
+	go test -run '^$$' -fuzz '^FuzzDecodeCursor_' -fuzztime $(FUZZTIME) ./internal/usecase/
+	go test -run '^$$' -fuzz '^FuzzCompareStreamIDs_' -fuzztime $(FUZZTIME) ./internal/usecase/
+	go test -run '^$$' -fuzz '^FuzzResolveTarget_' -fuzztime $(FUZZTIME) ./internal/usecase/
+	go test -run '^$$' -fuzz '^FuzzCallerFromClientCert_' -fuzztime $(FUZZTIME) ./internal/adapter/inbound/http/
+	go test -run '^$$' -fuzz '^FuzzDataFields_' -fuzztime $(FUZZTIME) ./internal/adapter/inbound/http/
+	go test -run '^$$' -fuzz '^FuzzSplitDepartments_' -fuzztime $(FUZZTIME) ./internal/adapter/inbound/http/
+	go test -run '^$$' -fuzz '^FuzzLoad_' -fuzztime $(FUZZTIME) ./internal/adapter/outbound/routingfile/
+
+API_BASE          ?= http://localhost:8080
+SCENARIO_TENANT   ?= 00000000-0000-4000-8000-0000000000a1
+SCENARIO_USER     ?= 00000000-0000-4000-8000-0000000000b1
+SCENARIO_DEPT     ?= 00000000-0000-4000-8000-0000000000c1
+SCHEMATHESIS_VERSION := 4.33.2
+FUZZ_SEED         ?= 1
+
+## hurl: Run the Hurl scenarios in test/hurl against a running local stack with CALLER_IDENTITY_CHECK=false (needs hurl: brew install hurl)
+hurl:
+	@command -v hurl >/dev/null || { echo "hurl is not installed: brew install hurl"; exit 1; }
+	hurl --test --jobs 1 --variable host=$(API_BASE) --variable tenant=$(SCENARIO_TENANT) \
+	    --variable user=$(SCENARIO_USER) --variable department=$(SCENARIO_DEPT) \
+	    --variable run=$$(date +%s) test/hurl/*.hurl
+
+## fuzz-api: Fuzz the ticket and stream routes of the spec with Schemathesis against a running local stack (needs uv)
+fuzz-api:
+	@command -v uvx >/dev/null || { echo "uv is not installed: brew install uv"; exit 1; }
+	@mkdir -p $(COVERAGE_DIR)/schemathesis
+	uvx --from schemathesis==$(SCHEMATHESIS_VERSION) schemathesis run docs/swagger/openapi.yaml \
+	    --url $(API_BASE) --include-path-regex '^/(api/v1/stream|healthz|readyz)' \
+	    -H 'x-tenant-id: $(SCENARIO_TENANT)' -H 'x-user-id: $(SCENARIO_USER)' -H 'x-tenant-roles: member' \
+	    --max-examples 50 --workers 1 --seed $(FUZZ_SEED) --generation-deterministic \
+	    --report junit --report-dir $(COVERAGE_DIR)/schemathesis
+
+## fuzz-internal-api: Fuzz the internal events route as the system caller against a running local stack with CALLER_IDENTITY_CHECK=false; it writes events (needs uv)
+fuzz-internal-api:
+	@command -v uvx >/dev/null || { echo "uv is not installed: brew install uv"; exit 1; }
+	@mkdir -p $(COVERAGE_DIR)/schemathesis
+	uvx --from schemathesis==$(SCHEMATHESIS_VERSION) schemathesis run docs/swagger/openapi.yaml \
+	    --url $(API_BASE) --include-path-regex '^/api/v1/internal/' \
+	    -H 'x-user-id: iam-system' -H 'x-tenant-roles: iam-system' \
+	    --max-examples 100 --workers 1 --seed $(FUZZ_SEED) --generation-deterministic \
+	    --report junit --report-dir $(COVERAGE_DIR)/schemathesis
 
 ## merge-coverage: Merge the unit and integration profiles into coverage.out
 merge-coverage:

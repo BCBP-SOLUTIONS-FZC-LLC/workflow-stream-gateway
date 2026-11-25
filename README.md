@@ -162,6 +162,9 @@ Every series carries `domain` (`workflow`), `service` (`workflow-stream-gateway`
 | `make design-sync-check` | Compare the LLD and both specs with their design copies (`DESIGN_DIR=<design checkout>`) |
 | `make lint-workflows` / `make vuln` / `make docker-check` | Workflow lint, dependency vulnerabilities, Dockerfile lint and scan |
 | `make smoke-test` | Build the image and check it end to end against a real Valkey (needs `GO_PRIVATE_TOKEN`) |
+| `make fuzz` | Fuzz every parser of untrusted input for `FUZZTIME` each (default `1m`); the seed inputs run in `make test` |
+| `make hurl` | Run the Hurl scenarios in `test/hurl` against a running stack started with `CALLER_IDENTITY_CHECK=false` (`API_BASE`, default `http://localhost:8080`) |
+| `make fuzz-api` / `make fuzz-internal-api` | Fuzz the ticket and stream routes, and the internal events route as the system caller, with Schemathesis against a running stack; settings in `schemathesis.toml` |
 
 ## CI
 

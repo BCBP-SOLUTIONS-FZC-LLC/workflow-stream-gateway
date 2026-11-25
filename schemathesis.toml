@@ -1,0 +1,22 @@
+# Read by `make fuzz-api` and `make fuzz-internal-api`. Each entry names one operation and one
+# check: nothing here turns a check off for a whole API.
+
+# A NUL character in a string is valid JSON but no identity or id can hold one.
+[generation]
+allow-x00 = false
+
+# The stream is authenticated by its ticket query parameter, not by the identity headers the
+# run sends: a ticket the fuzzer obtained from the mint route opens the stream (200), as intended.
+[[operations]]
+include-name = "GET /api/v1/stream"
+checks.ignored_auth.enabled = false
+
+# The events route takes an envelope whose payload is opaque to the schema: a payload without
+# `recipients` (400) and a pair of source and type the routing file does not list (200, ignored)
+# are both intended.
+[[operations]]
+include-name = "POST /api/v1/internal/events"
+checks.positive_data_acceptance.expected-statuses = [
+  "2XX", "3XX", 400, 401, 403, 404, 409, 429, "5XX",
+]
+checks.negative_data_rejection.enabled = false
