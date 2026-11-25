@@ -254,7 +254,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/TicketMintResponse'
         "401":
-          description: The gateway identity headers are missing; only a request that bypassed the gateway lacks them.
+          description: >
+            The gateway identity headers are missing, or the tenant, user or a
+            department id is not a lower-case UUID; only a request that bypassed
+            the gateway sends either.
           content:
             application/problem+json:
               schema:

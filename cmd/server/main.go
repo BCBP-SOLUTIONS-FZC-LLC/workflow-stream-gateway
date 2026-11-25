@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,7 +20,9 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/observability"
 )
 
-const shutdownTimeout = 10 * time.Second
+const minShutdownTimeout = 10 * time.Second
+
+const shutdownHeadroom = 5 * time.Second
 
 var version = "dev"
 
@@ -30,32 +34,40 @@ type Logger interface {
 }
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := serve(ctx, os.Stderr)
+	stop()
+	os.Exit(code)
+}
+
+func serve(ctx context.Context, stderr io.Writer) int {
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "fatal:", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintln(stderr, "fatal:", err)
+		return 1
 	}
 
 	log, err := logger.NewLogger(cfg.AppEnv)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "fatal: init logger:", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintln(stderr, "fatal: init logger:", err)
+		return 1
 	}
 
-	if err := run(cfg, log); err != nil {
+	if err := run(ctx, cfg, log); err != nil {
 		log.Error("fatal", map[string]interface{}{"error": err.Error()})
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
-func run(cfg *config.Config, log Logger) error {
+func run(ctx context.Context, cfg *config.Config, log Logger) error {
 	routes, err := routingfile.Load(cfg.RoutingConfigPath)
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.ValkeyDialTimeout)
-	client, err := valkey.NewClient(ctx, valkey.Options{
+	dialCtx, cancel := context.WithTimeout(ctx, cfg.ValkeyDialTimeout)
+	client, err := valkey.NewClient(dialCtx, valkey.Options{
 		Addr:         cfg.ValkeyAddr,
 		Password:     cfg.ValkeyPassword,
 		DialTimeout:  cfg.ValkeyDialTimeout,
@@ -81,7 +93,7 @@ func run(cfg *config.Config, log Logger) error {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           newRouter(cfg, ginCfg, client, routes),
+		Handler:           newRouter(ctx, cfg, ginCfg, client, routes),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
@@ -111,23 +123,25 @@ func run(cfg *config.Config, log Logger) error {
 		}
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
 	select {
 	case err := <-errCh:
 		return err
-	case <-stop:
+	case <-ctx.Done():
 		log.Info("shutting down", nil)
 	}
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout(cfg.HeartbeatInterval))
 	defer shutdownCancel()
+	var errs []error
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("server shutdown: %w", err)
+		errs = append(errs, fmt.Errorf("server shutdown: %w", err))
 	}
 	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("metrics server shutdown: %w", err)
+		errs = append(errs, fmt.Errorf("metrics server shutdown: %w", err))
 	}
-	return nil
+	return errors.Join(errs...)
+}
+
+func shutdownTimeout(heartbeat time.Duration) time.Duration {
+	return max(minShutdownTimeout, heartbeat+shutdownHeadroom)
 }

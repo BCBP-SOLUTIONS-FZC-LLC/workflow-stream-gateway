@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,7 +21,7 @@ func routerConfigWithFakes(events *fakeEventStore, tickets *fakeTicketStore) Rou
 	ticketService := usecase.NewTicketService(tickets, time.Minute, 10, time.Minute)
 	cfg.TicketHandler = NewTicketHandler(ticketService)
 	cfg.EventsHandler = NewEventsHandler(usecase.NewFanoutService(events, loadShippedRoutes(), usecase.CallerCheckOn))
-	cfg.StreamHandler = NewStreamHandler(usecase.NewStreamService(ticketService, nil, nil, 5, time.Minute, 15*time.Second))
+	cfg.StreamHandler = NewStreamHandler(usecase.NewStreamService(ticketService, nil, nil, 5, time.Minute, 15*time.Second), context.Background())
 	return cfg
 }
 
@@ -82,8 +83,8 @@ func TestRouter_PlainRequestsStillReachTheirHandlers(t *testing.T) {
 	})
 	t.Run("the ticket mint route", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil)
-		req.Header.Set("x-user-id", "user-1")
-		req.Header.Set("x-tenant-id", "tenant-a")
+		req.Header.Set("x-user-id", testUserID)
+		req.Header.Set("x-tenant-id", testTenantID)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 

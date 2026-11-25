@@ -108,9 +108,9 @@ dev:
 test:
 	@mkdir -p $(COVERAGE_DIR)
 	go test -race -count=1 \
-	    -coverpkg=./internal/... \
+	    -coverpkg=./internal/...,./cmd/... \
 	    -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
-	    ./internal/...
+	    ./internal/... ./cmd/...
 	@go tool cover -func=$(COVERAGE_DIR)/unit.out | awk '/^total:/{print "total:", $$NF}'
 
 ## test-integration: Run integration tests; containers start through testcontainers-go
@@ -118,9 +118,9 @@ test-integration:
 	@mkdir -p $(COVERAGE_DIR)
 	TESTCONTAINERS_RYUK_DISABLED=true \
 	go test -race -count=1 -tags integration \
-	    -coverpkg=./internal/... \
+	    -coverpkg=./internal/...,./cmd/... \
 	    -coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
-	    ./test/integration/...
+	    ./test/integration/... ./cmd/...
 
 ## merge-coverage: Merge the unit and integration profiles into coverage.out
 merge-coverage:

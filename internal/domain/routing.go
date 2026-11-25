@@ -40,7 +40,11 @@ const (
 	RecipientDepartment RecipientKind = "department"
 )
 
-var recipientIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var canonicalIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+func IsCanonicalID(id string) bool {
+	return canonicalIDPattern.MatchString(id)
+}
 
 var callerPattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)
 
@@ -53,7 +57,7 @@ func (r Recipient) Validate() error {
 	if r.Kind != RecipientUser && r.Kind != RecipientDepartment {
 		return fmt.Errorf("kind %q must be user or department", r.Kind)
 	}
-	if !recipientIDPattern.MatchString(r.ID) {
+	if !IsCanonicalID(r.ID) {
 		return errors.New("id must be a UUID in lower-case canonical form")
 	}
 	return nil

@@ -148,7 +148,7 @@ func newStreamTestRouter(ticketStore *fakeTicketStore, streamStore usecase.Strea
 	tickets := usecase.NewTicketService(ticketStore, time.Minute, 10, time.Minute)
 	stream := usecase.NewStreamService(tickets, streamStore, limiter, 5, time.Minute, time.Millisecond)
 	r := gin.New()
-	r.GET("/api/v1/stream", NewStreamHandler(stream).Stream)
+	r.GET("/api/v1/stream", NewStreamHandler(stream, context.Background()).Stream)
 	return r
 }
 

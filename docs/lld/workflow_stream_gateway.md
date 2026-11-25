@@ -10,7 +10,7 @@
 | Service | Workflow Stream Gateway (`workflow-stream-gateway`) |
 | Supersedes | `dashboard_stream_gateway.md` (proposal, rev 1.2) — see that document's own superseded banner |
 | Subsystem | Workflow Engine — real-time dashboard push |
-| Version | 1.19 |
+| Version | 1.20 |
 | Date | 2026-11-25 |
 | Status | Approved |
 | Audience | Workflow Engine team, platform/infra |
@@ -40,6 +40,7 @@
 | 1.17 | 2026-11-22 | **The reassigned event names the old assignee only when there was one** (§3.1; §6.1; §13). `old_user_id` is optional on `WorkflowTaskReassigned`; the event reaches the new assignee alone when it is absent. |
 | 1.18 | 2026-11-24 | **Routing is a file keyed by publishing service, and the SSE event name carries the service** (§3.1; §3.2; §4; §6; §7; §12; Appendix A decisions 5 and 19; Appendix B). Which events are rendered, and to whom, comes from a routing file read at start-up: one section per publishing service, matched by the envelope `source`, each listing its event types with their recipient fields and optional department field. Execution's 16 types are the shipped `workflow` section; Tender and LLM join as sections once their events are known, with no code change. A pair of `source` and type the file does not list is acknowledged with `200` and ignored. The `event:` line is `<service>.<type>`. A malformed file fails start-up, and a change reaches the pods by a rollout. |
 | 1.19 | 2026-11-25 | **Every publisher names its readers in one `recipients` list, and LLM generation events are the second section** (§1; §3.1; §3.2; §4; §6; §9.5; §11; §12; §13; Appendix A decisions 5, 14, 19, 20 and 21; Appendix B). Each routed payload carries `recipients`, a list of `{kind, id}` with `kind` `user` or `department`; the routing file no longer names payload fields, and lists per service its source, whether its events reach the tenant's administrators, and its event types. The `llm` section (source `llm-retrieval-generation`) routes the ten generation types, forwarded by the LLM subsystem's own consumer, and does not reach administrators. Each section also names the mesh identities allowed to post its events, checked against the caller identity the sidecar sets; another caller is refused with `403`. `recipients` is required, and every `id` is a lower-case UUID. |
+| 1.20 | 2026-11-25 | **Live tail never skips an event, the per-user counters always carry an expiry, identities are canonical ids, and a stopping replica drains its streams** (§4; §5.1; §6; §8; §9.3; §10.2; §10.4; §11; §12; Appendix B). A ticket is minted only for a tenant, user and departments whose ids are lower-case UUIDs, since those ids form the Valkey keys. A replica told to stop ends each open stream at its next wake-up and waits one heartbeat interval plus five seconds, so browsers reconnect elsewhere and resume from their cursor. A live read starts after the entry last delivered on each stream, beginning from the newest entry at connect, instead of at the current time, so an event written while the previous frame is sent is no longer lost. The connection cap check, its increment and its expiry are one atomic step, as are the ticket-mint counter and its window, so a failure can no longer leave a counter without an expiry that refuses the user for good, and a refused connect leaves the counter unchanged. A failed renewal of an open connection's claim is tolerated. The start-up limits on settings, the separate metrics listener, the start-up dependency checks, the zero-initialised series and the naming rule for service names and event types are stated. |
 
 ---
 
@@ -231,8 +232,8 @@ Identical contract shape to Execution Service's and Definition Service's own `/i
 | `sse:events:<tenant_id>:<user_id>` | Personal Valkey Stream; each entry is one rendered SSE frame (§7), `XADD`ed with `MINID ~` trimming to a 10-minute retention window | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out (§3.2 step 4) | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill, §8) |
 | `sse:events:broadcast:<tenant_id>` | Tenant-wide Valkey Stream (§6) — every event of a section that reaches administrators, same trim/TTL shape as the personal key | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, for every routed event of such a section | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket whose `tenant_roles` includes `tenant_admin`/`tenant_owner` |
 | `sse:events:broadcast:<tenant_id>:<department_id>` | One department's Valkey Stream (§6) — every event whose `recipients` names the department, same trim/TTL shape | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, once per department entry | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket holding any role in that department |
-| `sse:conncount:<tenant_id>:<user_id>` | Integer counter of currently-open SSE connections for this user | `EXPIRE` set on increment to a value longer than the ticket TTL and refreshed on every wake-up of the open connection, so a long-lived connection stays counted; release deletes the key at zero and never leaves it negative | `GET /api/v1/stream` on connect (increment) / disconnect (decrement) | `GET /api/v1/stream` on connect (cap check, §9.3) |
-| `sse:ticketrate:<tenant_id>:<user_id>` | Fixed-window counter, mint attempts in the current rolling minute | 60s, reset each window | `POST /api/v1/stream/tickets` | `POST /api/v1/stream/tickets` (rate check, §9.3) |
+| `sse:conncount:<tenant_id>:<user_id>` | Integer counter of currently-open SSE connections for this user | Set in one atomic step with the cap check and the increment, to a value longer than the ticket TTL, so a refused attempt leaves the counter unchanged and the counter never exists without an expiry; the expiry is and refreshed on every wake-up of the open connection, so a long-lived connection stays counted; release deletes the key at zero and never leaves it negative | `GET /api/v1/stream` on connect (increment) / disconnect (decrement) | `GET /api/v1/stream` on connect (cap check, §9.3) |
+| `sse:ticketrate:<tenant_id>:<user_id>` | Fixed-window counter, mint attempts in the current rolling minute | 60s, set in the same atomic step as the first mint of a window, so the counter never exists without an expiry and a user is never refused beyond one window | `POST /api/v1/stream/tickets` | `POST /api/v1/stream/tickets` (rate check, §9.3) |
 
 No dedup/idempotency key exists in this schema — see §9.2 for why one isn't needed, unlike every DB-backed `/internal/events` handler elsewhere in this platform.
 
@@ -245,6 +246,7 @@ No dedup/idempotency key exists in this schema — see §9.2 for why one isn't n
 Ordinary gateway-authenticated endpoint (`ProtectedMiddlewares`/`RequestContext`, same as any other REST call in this platform) — solves `EventSource`'s inability to set custom headers by minting a short-lived, opaque, ticket the subsequent `GET /api/v1/stream` call authenticates with instead.
 
 - **Auth.** Standard gateway headers (`x-tenant-id`, `x-user-id`, `x-tenant-roles`, `x-departments`, `x-plan`, `x-feature-flags`) — the full 6-header set is snapshotted into the ticket at mint time.
+- **Identity form.** The tenant, the user and every department id must be lower-case UUIDs, the form IAM issues. Any other value is refused with `401`: these ids form the stream and counter keys (§4), and a value carrying a key separator could name another tenant's or user's key.
 - **Request body.** None.
 - **Response `201 Created`:**
 
@@ -319,7 +321,7 @@ services:
 ```
 
 - An event is looked up by the envelope's `source` and `type`; two services may use the same type name. A pair the file does not list is acknowledged and ignored (§3.2).
-- The file is read once at start-up. A file with an unknown key, more than one document, a version other than 1, no services, a service name other than lowercase letters, digits and dashes, a service with no source, no callers, no `tenant_admins` or no events, a caller that is not `<namespace>/<service account>` or that is listed twice, a source shared by two services, or an event type that is not letters, digits, dots, dashes and underscores, or that is listed twice, fails start-up.
+- The file is read once at start-up. A file with an unknown key, more than one document, a version other than 1, no services, a service name that is not a lowercase letter followed by lowercase letters, digits and dashes, a service with no source, no callers, no `tenant_admins` or no events, a caller that is not `<namespace>/<service account>` or that is listed twice, a source shared by two services, or an event type that is not a letter followed by letters, digits, dots, dashes and underscores, or that is listed twice, fails start-up.
 - A change reaches the pods by a rollout, which the chart triggers when the file changes; the service never re-reads the file while running.
 
 ### 6.1 Personal tier
@@ -381,10 +383,11 @@ data: {"id":"018f2c3e-6b1a-7c40-9e2f-...","type":"WorkflowTaskCompleted","source
 
 **Store: Valkey Streams** (§4) — unifies live delivery and backfill in one mechanism and one data structure. No Gateway replica needs to "own" a given user in memory, and no sticky/consistent-hash routing is required at the load balancer: any replica that accepts a connection or reconnection can serve it, since it reads the same Valkey keys any other replica would.
 
-- **Fresh connection** (no `last_event_id`): `XREAD` starting at `$` (now) — across every stream key the connection is eligible for (§6.4), one multi-key `XREAD BLOCK` call.
+- **Fresh connection** (no `last_event_id`): the newest entry of every stream key the connection is eligible for (§6.4) at connect is its starting position, and one multi-key `XREAD BLOCK` call reads after it.
+- **Live tail resumes from the last entry delivered on each key.** Every read starts after the entry last sent on that key, or after its starting position, never at the current time, so an event written while the previous frame is being sent arrives on the next read and an open connection never skips an event.
 - **The SSE `id:` line is a compound cursor, not a bare Stream ID**: `"<key1>=<id1>|<key2>=<id2>"`, one pair per stream key the connection is currently tailing (§4's key-naming scheme), reflecting the connection's full resume position across every tier after each frame — not just the ID of the stream that frame happened to come from. This is necessary because a browser's native `EventSource` remembers exactly one `Last-Event-ID` value and echoes it back verbatim on reconnect; a connection tailing 2–4 streams at once (personal plus tenant-wide, or personal plus N departments) needs that one string to carry every stream's position, not just whichever one emitted most recently.
 - **Reconnecting** (`last_event_id` present, via header or query param, compound-formatted): decode it into per-key positions, keep only the keys matching streams this connection is *currently* eligible for (a key from a department the ticket no longer holds is dropped, never trusted as identity — §9.1's "identity from the ticket, never the client" stance extends to this string's contents too), then `XRANGE key (<last_id> +` per surviving key, replay oldest-first per key, then continue live-tailing every eligible key. A key absent from the incoming cursor (fresh connection, or a tier the ticket only just gained) gets no backfill for that one stream — not an error, the same "no `last_event_id` → replay nothing" behavior as before, just decided per-key instead of connection-wide. A malformed or pre-2026-08-24 bare-ID `last_event_id` decodes to no valid pairs at all and degrades the same way as a fresh connection.
-- **Beyond the 10-minute window** (or a stream key itself expired), for *any* one of the keys being backfilled: no partial replay is attempted for that key, and the **whole connection** gets `event: resync-required` / `data: {"reason":"backfill_window_exceeded"}`, then resumes live-tailing every eligible key from `$`. Partial replay — some streams caught up, others silently gapped — was judged worse than the frontend's existing full-REST-refetch fallback, so one lagging tier still resyncs the whole connection rather than resyncing just itself.
+- **Beyond the 10-minute window** (or a stream key itself expired), for *any* one of the keys being backfilled: no partial replay is attempted for that key, and the **whole connection** gets `event: resync-required` / `data: {"reason":"backfill_window_exceeded"}`, then resumes live-tailing every eligible key from its newest entry at connect. Partial replay — some streams caught up, others silently gapped — was judged worse than the frontend's existing full-REST-refetch fallback, so one lagging tier still resyncs the whole connection rather than resyncing just itself.
 - **No dedup table.** A duplicate SSE delivery (native reconnect, or an `/internal/events` retry per §3.2) is harmless — an idempotent frontend reducer applying "task X completed" twice is a no-op.
 
 ---
@@ -401,7 +404,7 @@ Execution's own `/internal/events` handler dedups through the `platform-events` 
 
 ### 9.3 Abuse/resource-exhaustion controls
 
-Per-user connection cap (`sse:conncount`, 5, §4) and ticket-mint rate limit (`sse:ticketrate`, 10/min, §4) — both provisional numbers, not validated against real usage data (Appendix B).
+Per-user connection cap (`sse:conncount`, 5, §4) and ticket-mint rate limit (`sse:ticketrate`, 10/min, §4) — both provisional numbers, not validated against real usage data (Appendix B). An open connection renews its claim on the cap on every wake-up of its read loop. A failed renewal does not close the stream, so during a Valkey fault a claim can lapse and the user briefly exceed the cap until the stream ends; closing healthy streams over a counter fault would cost more than that short excess.
 
 ### 9.4 Fail-closed on Valkey unavailability
 
@@ -457,7 +460,9 @@ Route-table wiring and business-object construction are split across two files: 
 
 ### 10.2 Scaling
 
-Scales on open-connection count, not request QPS — a different signal from every other service in this platform. Replica count, HPA metric, and graceful-drain behavior on rolling deploy are infra-owned, not designed in this document (Appendix B).
+Scales on open-connection count, not request QPS — a different signal from every other service in this platform. Replica count and the HPA metric are infra-owned, not designed in this document (Appendix B).
+
+**Drain on shutdown.** When a replica is told to stop, it stops accepting connections and ends every open stream at that stream's next wake-up, at most one heartbeat interval later. The browser's `EventSource` reconnects through the load balancer to another replica and resumes from its compound cursor (§8), so a rolling deploy loses no event within the retention window. The replica waits for its streams for one heartbeat interval plus five seconds, and never less than ten seconds; the pod's termination grace period covers that wait.
 
 ### 10.3 Envoy route configuration
 
@@ -465,7 +470,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 
 ### 10.4 Health probes
 
-`GET /healthz` is a trivial liveness check — process is running, no dependency call — and backs Kubernetes' `livenessProbe`. `GET /readyz` pings Valkey and backs `readinessProbe` only. The two are deliberately not the same endpoint: failing `/readyz` only pulls the pod out of Service/HTTPRoute rotation, while failing `/healthz` kills and restarts the process — a transient Valkey blip is exactly the kind of dependency hiccup this service didn't cause and shouldn't be restarted over (rev 1.5, Appendix A Decision 17).
+`GET /healthz` is a trivial liveness check — process is running, no dependency call — and backs Kubernetes' `livenessProbe`. `GET /readyz` pings Valkey and backs `readinessProbe` only. The two are deliberately not the same endpoint: failing `/readyz` only pulls the pod out of Service/HTTPRoute rotation, while failing `/healthz` kills and restarts the process — a transient Valkey blip is exactly the kind of dependency hiccup this service didn't cause and shouldn't be restarted over (rev 1.5, Appendix A Decision 17). Start-up itself fails when Valkey does not answer within its dial timeout or telemetry cannot be set up; after start-up, a Valkey outage only fails readiness.
 
 ---
 
@@ -482,7 +487,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 - `workflow_stream_gateway_internal_auth_rejected_total{reason}` (`reason ∈ {missing_user, missing_role, caller_not_allowed}`): internal-route requests refused for a missing system caller identity, or for a caller the event's section does not name
 - `workflow_stream_gateway_frames_written_total{event_type}`
 
-`docs/observability/metric-registry.md` lists the series from a real scrape. The chart's `PrometheusRule` alerts on the absence of a healthy replica, a replica count below two, a sustained `5xx` rate, a handler panic, Valkey unavailability on the ticket and stream routes, sustained ingest errors, and clients hitting the per-user cap. Every alert carries a `runbook` annotation naming its entry in the service's runbooks, which say what the alert means and the first steps to take. Tracing exports over OTLP; `OTEL_EXPORTER_OTLP_ENDPOINT` unset or `none` disables export while trace and request ids keep working.
+Series whose labels form a closed set exist at zero from start-up, so rates and absence alerts work from the first scrape; series labelled by `event_type` appear on first use, because that set is open. Metrics are served on their own listener (`METRICS_PORT`), never on the API port (`HTTP_PORT`); a port that cannot be bound, including the two being the same, fails start-up. `docs/observability/metric-registry.md` lists the series from a real scrape. The chart's `PrometheusRule` alerts on the absence of a healthy replica, a replica count below two, a sustained `5xx` rate, a handler panic, Valkey unavailability on the ticket and stream routes, sustained ingest errors, and clients hitting the per-user cap. Every alert carries a `runbook` annotation naming its entry in the service's runbooks, which say what the alert means and the first steps to take. Tracing exports over OTLP; `OTEL_EXPORTER_OTLP_ENDPOINT` unset or `none` disables export while trace and request ids keep working.
 
 **Heartbeat:** a `: keep-alive` comment frame every 15 seconds on every open connection (§7).
 
@@ -504,6 +509,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 | `ROUTING_CONFIG_PATH` | `config/routing.yaml` | The routing file (§6); the image holds none, so it is always mounted: the chart mounts it from its `routing` values and rolls the pods when it changes |
 | `CALLER_IDENTITY_CHECK` | `true` | Binds each section's source to its callers (§3.2); `false` is accepted only when `APP_ENV` is `local`, `dev` or `test`, where no mesh sets the caller identity |
 | Malformed values | startup fails | A number or duration that does not parse is an error, never a silent default |
+| Value limits | startup fails | Every duration, the ticket-mint rate and the connection cap must be greater than zero, and the stream key expiry longer than the retention window, so a key never expires before its entries are trimmed |
 | `VALKEY_ADDR` / `VALKEY_PASSWORD` / `VALKEY_DIAL_TIMEOUT` / `VALKEY_READ_TIMEOUT` / `VALKEY_WRITE_TIMEOUT` | matches `event_consumer`'s own env-var naming | platform-wide Valkey client convention |
 
 ---
@@ -562,7 +568,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 - **Infrastructure provisioning this document references but does not design.** Three items the prose points here for, each owned outside any application repo:
   - The `wf-workflow-dash-q` SNS subscription's filter policy on the `EventType` message attribute, scoped to exactly the 16 types of §3.1 (§3.2).
   - The real ingress idle-timeout, against which this document's 15-second heartbeat is provisional (§7, §11, §12).
-  - Replica count, HPA metric, and graceful-drain behaviour on rolling deploy — this service scales on open-connection count, not request QPS (§10.3).
+  - Replica count and the HPA metric — this service scales on open-connection count, not request QPS (§10.2). The service's own drain on shutdown is designed in §10.2.
 - **Tender onboarding** (§1, §6) — joins as a section of the routing file once its event types and envelope `source` are defined, with `recipients` on every event meant for a browser; no code change. The event consumer needs a queue and topology routes before its events reach this service.
 - **LLM Ingestion events** (§1, §6) — whether Ingestion publishes events for a browser, under which `source`, and with `recipients`, is for the LLM subsystem to state.
 - **The LLM subsystem consumer's namespace** (§3.2) — the platform team sets it; the authorization policy and the NetworkPolicy carry a placeholder until then, and its calls are refused meanwhile.

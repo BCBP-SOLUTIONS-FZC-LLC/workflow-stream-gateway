@@ -30,8 +30,8 @@ func TestTicketHandler_Mint_FeatureFlagsHeader(t *testing.T) {
 			r := newTestRouter(usecase.NewTicketService(store, 60*time.Second, 10, time.Minute))
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil)
-			req.Header.Set("x-user-id", "user-1")
-			req.Header.Set("x-tenant-id", "tenant-1")
+			req.Header.Set("x-user-id", testUserID)
+			req.Header.Set("x-tenant-id", testTenantID)
 			if tc.header != "" {
 				req.Header.Set("x-feature-flags", tc.header)
 			}
@@ -56,8 +56,8 @@ func TestTicketHandler_Mint_MetricsNotInitialised_StillCreated(t *testing.T) {
 	r := newTestRouter(usecase.NewTicketService(store, 60*time.Second, 10, time.Minute))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil)
-	req.Header.Set("x-user-id", "user-1")
-	req.Header.Set("x-tenant-id", "tenant-1")
+	req.Header.Set("x-user-id", testUserID)
+	req.Header.Set("x-tenant-id", testTenantID)
 	rec := httptest.NewRecorder()
 
 	require.NotPanics(t, func() { r.ServeHTTP(rec, req) })

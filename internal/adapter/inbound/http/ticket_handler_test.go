@@ -28,6 +28,13 @@ func init() {
 	obstest.Setup()
 }
 
+const (
+	testTenantID = "00000000-0000-4000-8000-0000000000a1"
+	testUserID   = "00000000-0000-4000-8000-0000000000b1"
+	testDeptA    = "00000000-0000-4000-8000-0000000000c1"
+	testDeptB    = "00000000-0000-4000-8000-0000000000c2"
+)
+
 // fixtureStore is a minimal usecase.Store fake for exercising the HTTP
 // handler layer — kept local rather than shared with internal/usecase's
 // own fake, since it's small enough that a shared test-only package would
@@ -81,10 +88,10 @@ func TestTicketHandler_Mint_Success(t *testing.T) {
 	r := newTestRouter(svc)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil)
-	req.Header.Set("x-user-id", "user-1")
-	req.Header.Set("x-tenant-id", "tenant-1")
+	req.Header.Set("x-user-id", testUserID)
+	req.Header.Set("x-tenant-id", testTenantID)
 	req.Header.Set("x-tenant-roles", "admin,user")
-	req.Header.Set("x-departments", "dept-a:approver, dept-b:reviewer")
+	req.Header.Set("x-departments", testDeptA+":approver, "+testDeptB+":reviewer")
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
@@ -97,12 +104,48 @@ func TestTicketHandler_Mint_Success(t *testing.T) {
 
 	require.Len(t, store.tickets, 1)
 	for _, ticket := range store.tickets {
-		assert.Equal(t, "tenant-1", ticket.TenantID)
-		assert.Equal(t, "user-1", ticket.UserID)
+		assert.Equal(t, testTenantID, ticket.TenantID)
+		assert.Equal(t, testUserID, ticket.UserID)
 		assert.Equal(t, []domain.DepartmentRole{
-			{DepartmentID: "dept-a", Role: "approver"},
-			{DepartmentID: "dept-b", Role: "reviewer"},
+			{DepartmentID: testDeptA, Role: "approver"},
+			{DepartmentID: testDeptB, Role: "reviewer"},
 		}, ticket.Departments)
+	}
+}
+
+func TestTicketHandler_Mint_RefusesAnIdentityThatIsNotACanonicalID(t *testing.T) {
+	const (
+		tenant = "00000000-0000-4000-8000-0000000000a1"
+		user   = "00000000-0000-4000-8000-0000000000b1"
+		dept   = "00000000-0000-4000-8000-0000000000c1"
+	)
+	cases := map[string]struct{ tenant, user, departments string }{
+		"tenant with a key separator":  {"a:b", user, ""},
+		"user with a key separator":    {tenant, "b:c", ""},
+		"upper-case tenant":            {"00000000-0000-4000-8000-0000000000A1", user, ""},
+		"user that is not a uuid":      {tenant, "user-1", ""},
+		"department that is not uuid":  {tenant, user, "dept|x:approver"},
+		"one bad department among two": {tenant, user, dept + ":approver, d=1:reviewer"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := &fixtureStore{tickets: map[string]domain.Ticket{}, allow: true}
+			r := newTestRouter(usecase.NewTicketService(store, 60*time.Second, 10, time.Minute))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil)
+			req.Header.Set("x-tenant-id", tc.tenant)
+			req.Header.Set("x-user-id", tc.user)
+			req.Header.Set("x-tenant-roles", "member")
+			if tc.departments != "" {
+				req.Header.Set("x-departments", tc.departments)
+			}
+			rec := httptest.NewRecorder()
+
+			r.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.Contains(t, rec.Body.String(), "invalid gateway identity")
+			assert.Empty(t, store.tickets, "no ticket is stored for an identity that could share a stream key with another")
+		})
 	}
 }
 
@@ -148,8 +191,8 @@ func TestTicketHandler_Mint_RateLimited(t *testing.T) {
 	r := newTestRouter(svc)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil)
-	req.Header.Set("x-user-id", "user-1")
-	req.Header.Set("x-tenant-id", "tenant-1")
+	req.Header.Set("x-user-id", testUserID)
+	req.Header.Set("x-tenant-id", testTenantID)
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
@@ -163,8 +206,8 @@ func TestTicketHandler_Mint_StoreUnavailable(t *testing.T) {
 	r := newTestRouter(svc)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil)
-	req.Header.Set("x-user-id", "user-1")
-	req.Header.Set("x-tenant-id", "tenant-1")
+	req.Header.Set("x-user-id", testUserID)
+	req.Header.Set("x-tenant-id", testTenantID)
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)

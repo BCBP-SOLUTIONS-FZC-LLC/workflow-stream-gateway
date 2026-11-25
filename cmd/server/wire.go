@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
@@ -13,7 +15,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
-func newRouter(cfg *config.Config, ginCfg gincommon.Config, client *redis.Client, routes *domain.RoutingTable) *gin.Engine {
+func newRouter(stopping context.Context, cfg *config.Config, ginCfg gincommon.Config, client *redis.Client, routes *domain.RoutingTable) *gin.Engine {
 	ticketStore := sgValkey.NewTicketStore(client)
 	ticketService := usecase.NewTicketService(ticketStore, cfg.TicketTTL, cfg.TicketMintRateMax, cfg.TicketMintRateWindow)
 	ticketHandler := sgHTTP.NewTicketHandler(ticketService)
@@ -29,9 +31,9 @@ func newRouter(cfg *config.Config, ginCfg gincommon.Config, client *redis.Client
 		ticketService, streamStore, connLimiter,
 		cfg.ConnectionCapPerUser, connCountTTL, cfg.HeartbeatInterval,
 	)
-	streamHandler := sgHTTP.NewStreamHandler(streamService)
+	streamHandler := sgHTTP.NewStreamHandler(streamService, stopping)
 
-	return sgHTTP.NewRouter(sgHTTP.RouterConfig{
+	return sgHTTP.NewRouter(sgHTTP.RouterConfig{ //nolint:contextcheck // handlers take each request's own context; stopping only ends open streams
 		GinConfig:     ginCfg,
 		AppEnv:        cfg.AppEnv,
 		ValkeyClient:  client,

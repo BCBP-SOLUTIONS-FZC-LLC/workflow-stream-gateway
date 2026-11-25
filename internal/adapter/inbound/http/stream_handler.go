@@ -13,11 +13,12 @@ import (
 )
 
 type StreamHandler struct {
-	stream *usecase.StreamService
+	stream   *usecase.StreamService
+	stopping context.Context
 }
 
-func NewStreamHandler(stream *usecase.StreamService) *StreamHandler {
-	return &StreamHandler{stream: stream}
+func NewStreamHandler(stream *usecase.StreamService, stopping context.Context) *StreamHandler {
+	return &StreamHandler{stream: stream, stopping: stopping}
 }
 
 func (h *StreamHandler) Stream(c *gin.Context) {
@@ -71,7 +72,11 @@ func (h *StreamHandler) Stream(c *gin.Context) {
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 
-	_ = h.stream.Serve(c.Request.Context(), ticket, lastEventID, ginFrameSink{w: c.Writer})
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	stopWatching := context.AfterFunc(h.stopping, cancel)
+	defer stopWatching()
+	_ = h.stream.Serve(ctx, ticket, lastEventID, ginFrameSink{w: c.Writer})
 }
 
 func recordConnectionRejected(reason string) {

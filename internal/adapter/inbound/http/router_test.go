@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -40,7 +41,7 @@ func testRouterConfig() RouterConfig {
 		ValkeyClient:  unreachableValkeyClient(),
 		TicketHandler: NewTicketHandler(tickets),
 		EventsHandler: NewEventsHandler(usecase.NewFanoutService(nil, loadShippedRoutes(), usecase.CallerCheckOn)),
-		StreamHandler: NewStreamHandler(usecase.NewStreamService(tickets, nil, nil, 5, time.Minute, 15*time.Second)),
+		StreamHandler: NewStreamHandler(usecase.NewStreamService(tickets, nil, nil, 5, time.Minute, 15*time.Second), context.Background()),
 	}
 }
 
@@ -187,8 +188,8 @@ func TestNewRouter_TicketMint_GatewayIdentityWithoutTheSystemRoleSucceeds(t *tes
 	before := obstest.Sum(t, metric, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/stream/tickets", nil)
-	req.Header.Set("x-user-id", "user-1")
-	req.Header.Set("x-tenant-id", "tenant-a")
+	req.Header.Set("x-user-id", testUserID)
+	req.Header.Set("x-tenant-id", testTenantID)
 	req.Header.Set("x-tenant-roles", "tenant_admin")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

@@ -144,7 +144,7 @@ Every series carries `domain` (`workflow`), `service` (`workflow-stream-gateway`
 
 - The ticket is the only source of connection identity on the stream route; a client-supplied identity is never read.
 - The internal endpoint admits only the system caller identity (`x-tenant-roles` holds `iam-system`, `x-user-id` is set) and caps request bodies at 10 MiB. The headers are not a credential: mesh mutual TLS names the caller, and an Istio `AuthorizationPolicy` admits only the event consumer on `/api/v1/internal/events`. With the policy off, the header check is the only gate besides the NetworkPolicy. The router matches the raw path and answers `404` for an encoded slash, so `/api/v1/internal%2Fevents` reaches no handler. A refused caller is counted in `workflow_stream_gateway_internal_auth_rejected_total{reason}`.
-- Per-user connection and mint-rate caps live in Valkey; the connection counter cannot go negative.
+- Per-user connection and mint-rate caps live in Valkey; the connection counter cannot go negative, both counters always carry an expiry, and a refused connect leaves the count unchanged.
 - Container: distroless, non-root, read-only root filesystem, all capabilities dropped.
 
 ---
