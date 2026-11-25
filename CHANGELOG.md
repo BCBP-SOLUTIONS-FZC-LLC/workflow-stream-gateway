@@ -18,6 +18,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - Ingest refuses with 400 an envelope whose `tenant_id` is not a lower-case UUID, since the tenant forms every stream key.
 - A resume cursor id that is not a stream id is dropped, and one beyond the newest entry is taken as the newest entry; a malformed id used to end the stream and a future one left it silent.
 - The ticket TTL, mint window, retention window and heartbeat interval must be at least 1 ms; below that Valkey reads them as 0, which disables the expiry or makes a read wait forever.
+- A stream flushes its `200` and headers before it first waits for events, so a browser's `EventSource` opens at once instead of at the first heartbeat (up to 15 s later).
 - A method a known path does not serve is answered `405` with an `Allow` header instead of `404`. The OpenAPI documents the shared middleware's flat `application/json` body on the mint route's `401`.
 - A problem response names the path as it was sent: a refused `/api/v1/internal%2Fevents` used to read "no route matches POST /api/v1/internal/events", a path that does have a route.
 - A ticket is minted only when the tenant, user and every department id are lower-case UUIDs; any other value is refused with 401, since these ids form the Valkey keys and a key separator in one could name another tenant's key.
@@ -25,6 +26,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 ### Changed
 
 - `make test` and `make test-integration` run and count `cmd/`, which no target ran before, and the integration run also includes integration-tagged tests under `internal/`; start-up, shutdown and exit codes of the server are tested.
+- CI, inside the existing jobs: the test job runs `make blackbox` (Hurl and Schemathesis against a stack it starts); the quality job runs `make alerts-test` (promtool unit tests for every alert rule the chart renders, also in `make check`) and `make contract-breaking` (oasdiff against `main`). `make test` now runs the alert runbook test in `test/monitoring`, which no target ran before.
 - `make fuzz` fuzzes every parser of untrusted input (resume cursor, stream id order, caller identity header, department header, SSE data lines, ingest payload, routing file); `make hurl` runs HTTP scenarios and `make fuzz-api` / `make fuzz-internal-api` run Schemathesis against a running stack.
 - The coverage gate is 97% overall and per package (from 90%), with lower floors only for `internal/observability` (90) and `cmd/server` (85), whose remaining lines exit the process or fail only when a platform library refuses its own identity.
 - Tests: request-body limit, readiness, unmatched routes, ticket edge cases, stream failures, metric pre-initialisation and Valkey adapter boundaries. The Valkey integration test that slept before appending now waits until the reader is blocked.

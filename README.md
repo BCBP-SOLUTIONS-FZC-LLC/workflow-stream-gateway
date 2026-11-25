@@ -164,6 +164,9 @@ Every series carries `domain` (`workflow`), `service` (`workflow-stream-gateway`
 | `make smoke-test` | Build the image and check it end to end against a real Valkey (needs `GO_PRIVATE_TOKEN`) |
 | `make fuzz` | Fuzz every parser of untrusted input for `FUZZTIME` each (default `1m`); the seed inputs run in `make test` |
 | `make hurl` | Run the Hurl scenarios in `test/hurl` against a running stack started with `CALLER_IDENTITY_CHECK=false` (`API_BASE`, default `http://localhost:8080`) |
+| `make blackbox` | Start Valkey and the gateway, run `hurl`, `fuzz-api` and `fuzz-internal-api` against them, then stop them; CI runs it in the test job |
+| `make alerts-test` | Unit-test every alert rule the chart renders with promtool; runs in `make check` and the quality job |
+| `make contract-breaking` | Fail on a breaking change to `docs/swagger/openapi.yaml` against `CONTRACT_BASE_REF` (default `origin/main`); runs in the quality job |
 | `make fuzz-api` / `make fuzz-internal-api` | Fuzz the ticket and stream routes, and the internal events route as the system caller, with Schemathesis against a running stack; settings in `schemathesis.toml` |
 
 ## CI

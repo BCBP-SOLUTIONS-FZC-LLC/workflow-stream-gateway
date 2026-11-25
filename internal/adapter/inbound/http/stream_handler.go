@@ -72,6 +72,7 @@ func (h *StreamHandler) Stream(c *gin.Context) {
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
+	c.Writer.Flush()
 
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()

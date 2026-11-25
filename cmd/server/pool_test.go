@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -72,6 +73,7 @@ func TestRun_OpenStreamsDoNotStarveEventIngest(t *testing.T) {
 		require.NoError(t, err)
 		go func() {
 			if resp, err := http.DefaultClient.Do(req); err == nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
 			}
 		}()

@@ -22,8 +22,8 @@ jobs:
   test:
     name: test
     if: ${{ !inputs.skip }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -68,4 +68,36 @@ jobs:
         with:
           name: coverage
           path: .coverage/coverage.out
+          if-no-files-found: ignore
+
+      - name: Install Hurl
+        env:
+          HURL_VERSION: 8.1.0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/hurl.deb" "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/hurl_${HURL_VERSION}_amd64.deb"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "$RUNNER_TEMP/hurl.deb"
+          hurl --version
+
+      - name: Cache the Schemathesis download
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      - name: Install uv
+        run: python3 -m pip install --user uv==0.13.7
+
+      - name: Black-box checks (Hurl and Schemathesis against the running stack)
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          make blackbox
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: blackbox-logs
+          path: |
+            .coverage/blackbox/*.log
+            .coverage/schemathesis/*.xml
           if-no-files-found: ignore
