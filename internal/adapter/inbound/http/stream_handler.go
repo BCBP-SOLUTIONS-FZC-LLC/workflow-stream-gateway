@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -90,7 +91,7 @@ type ginFrameSink struct {
 }
 
 func (s ginFrameSink) WriteFrame(id, eventType string, data []byte) error {
-	if _, err := fmt.Fprintf(s.w, "id: %s\nevent: %s\ndata: %s\n\n", id, eventType, data); err != nil {
+	if _, err := fmt.Fprintf(s.w, "id: %s\nevent: %s\n%s\n", id, eventType, dataFields(data)); err != nil {
 		return fmt.Errorf("write sse frame: %w", err)
 	}
 	s.w.Flush()
@@ -98,11 +99,23 @@ func (s ginFrameSink) WriteFrame(id, eventType string, data []byte) error {
 }
 
 func (s ginFrameSink) WriteControlFrame(eventType string, data []byte) error {
-	if _, err := fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", eventType, data); err != nil {
+	if _, err := fmt.Fprintf(s.w, "event: %s\n%s\n", eventType, dataFields(data)); err != nil {
 		return fmt.Errorf("write sse control frame: %w", err)
 	}
 	s.w.Flush()
 	return nil
+}
+
+var sseLineBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n")
+
+func dataFields(data []byte) string {
+	var b strings.Builder
+	for _, line := range strings.Split(sseLineBreaks.Replace(string(data)), "\n") {
+		b.WriteString("data: ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func (s ginFrameSink) WriteHeartbeat() error {

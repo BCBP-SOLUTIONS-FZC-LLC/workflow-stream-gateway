@@ -146,9 +146,8 @@ func (s *StreamService) Serve(ctx context.Context, ticket domain.Ticket, lastEve
 		}
 	}
 	for _, f := range frames {
-		cursors[f.SourceKey] = f.ID
 		positions[f.SourceKey] = f.ID
-		if err := sink.WriteFrame(encodeCursor(cursors), f.EventType, f.Data); err != nil {
+		if err := sink.WriteFrame(encodeResumeCursor(positions), f.EventType, f.Data); err != nil {
 			return err
 		}
 	}
@@ -181,9 +180,8 @@ func (s *StreamService) Serve(ctx context.Context, ticket domain.Ticket, lastEve
 			continue
 		}
 		for _, f := range newFrames {
-			cursors[f.SourceKey] = f.ID
 			positions[f.SourceKey] = f.ID
-			if err := sink.WriteFrame(encodeCursor(cursors), f.EventType, f.Data); err != nil {
+			if err := sink.WriteFrame(encodeResumeCursor(positions), f.EventType, f.Data); err != nil {
 				return err
 			}
 		}

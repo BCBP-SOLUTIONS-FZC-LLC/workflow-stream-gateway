@@ -7,6 +7,18 @@ const (
 	cursorKVSep   = "="
 )
 
+const NoEntryID = "0-0"
+
+func encodeResumeCursor(positions map[string]string) string {
+	resumable := make(map[string]string, len(positions))
+	for key, id := range positions {
+		if id != NoEntryID {
+			resumable[key] = id
+		}
+	}
+	return encodeCursor(resumable)
+}
+
 func encodeCursor(cursors map[string]string) string {
 	if len(cursors) == 0 {
 		return ""

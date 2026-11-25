@@ -50,7 +50,7 @@ func (s *StreamStore) LatestEntryID(ctx context.Context, target usecase.StreamTa
 		return "", fmt.Errorf("valkey xrevrange: %w", err)
 	}
 	if len(entries) == 0 {
-		return "0-0", nil
+		return usecase.NoEntryID, nil
 	}
 	return entries[0].ID, nil
 }

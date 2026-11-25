@@ -8,8 +8,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Fixed
+
+- Live delivery no longer skips events: each read starts after the entry last delivered on each stream (beginning from the newest entry at connect, the resume cursor or the last backfilled entry), instead of waiting only for entries newer than the read itself, so an event written while a frame was being sent is delivered.
+- The ticket-mint rate counter and the connection counter set their expiry in the same atomic step as the increment. A failed second command used to leave a counter without an expiry, refusing the user for good; the connection cap is now checked before the increment, so a refused connect leaves the count unchanged.
+- A replica told to stop ends its open streams at their next wake-up and waits one heartbeat interval plus five seconds (at least ten), and always shuts down both listeners. Shutdown with a connected browser used to run into the timeout and exit with an error.
+- The resume cursor names every tailed stream that holds an entry from the first frame, so a reconnect after a resync no longer resyncs again; and a payload with line breaks is written as one `data:` line per payload line, so it can no longer start another SSE field or end the event early.
+- A ticket is minted only when the tenant, user and every department id are lower-case UUIDs; any other value is refused with 401, since these ids form the Valkey keys and a key separator in one could name another tenant's key.
+
 ### Changed
 
+- `make test` and `make test-integration` run and count `cmd/`, which no target ran before; start-up, shutdown and exit codes of the server are tested.
+- Tests: request-body limit, readiness, unmatched routes, ticket edge cases, stream failures, metric pre-initialisation and Valkey adapter boundaries. The Valkey integration test that slept before appending now waits until the reader is blocked.
 - The OpenAPI envelope `type` no longer lists the old twelve dotted-lowercase types: a type is PascalCase and matched with `source` against the routing file, and a type its section does not list is accepted and ignored with 200.
 - CI: the PR summary reports a failed or cancelled gate as failed instead of "All checks passed", and counts a run as skipped only when the gate says so.
 - Every routed payload names its readers in `recipients`, a list of `{kind, id}` (`kind` `user` or `department`); a `user` entry reaches that user, a `department` entry that department's tier, and a repeated entry is written once. The routing file names no payload fields: each section lists its `source`, `tenant_admins` (whether its events also reach the tenant's administrators) and its event types.

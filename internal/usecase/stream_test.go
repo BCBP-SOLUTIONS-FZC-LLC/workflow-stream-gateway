@@ -612,6 +612,43 @@ func TestStreamService_Serve_LiveReadsResumeAfterTheLastDeliveredEntry(t *testin
 	}
 }
 
+func TestStreamService_Serve_TheResumeCursorCarriesEveryStreamPosition(t *testing.T) {
+	const deptKey = "sse:events:broadcast:tenant-a:dept-a"
+	ticket := domain.Ticket{TenantID: "tenant-a", UserID: "user-1", Departments: []domain.DepartmentRole{{DepartmentID: "dept-a", Role: "approver"}}}
+	stale := encodeCursor(map[string]string{testPersonalKey: "20-0", deptKey: "20-0"})
+	cases := map[string]struct {
+		store       *fakeStreamStore
+		lastEventID string
+		want        map[string]string
+	}{
+		"after a resync, a stream with no new frame resumes from its newest entry at connect": {
+			store:       &fakeStreamStore{latestID: "50-0", oldestID: "40-0", oldestExists: true},
+			lastEventID: stale,
+			want:        map[string]string{testPersonalKey: "60-0", deptKey: "50-0"},
+		},
+		"a fresh connection names every existing stream from its first frame": {
+			store: &fakeStreamStore{latestID: "50-0"},
+			want:  map[string]string{testPersonalKey: "60-0", deptKey: "50-0"},
+		},
+		"a stream that does not exist yet is left out": {
+			store: &fakeStreamStore{},
+			want:  map[string]string{testPersonalKey: "60-0"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tc.store.readNewSeq = []readNewResult{{frames: tagSourceKey(testPersonalKey, []domain.Frame{{ID: "60-0", EventType: "E"}})}}
+			sink := &fakeSink{}
+
+			err := newTestStreamService(tc.store, &fakeLimiter{}).Serve(context.Background(), ticket, tc.lastEventID, sink)
+
+			assert.ErrorIs(t, err, errStopTest)
+			require.Len(t, sink.frames, 1)
+			assert.Equal(t, tc.want, decodeCursor(sink.frames[0].ID))
+		})
+	}
+}
+
 func TestStreamService_Serve_FailsWhenTheNewestEntryCannotBeRead(t *testing.T) {
 	store := &fakeStreamStore{latestErr: errors.New("valkey down")}
 	svc := newTestStreamService(store, &fakeLimiter{})
