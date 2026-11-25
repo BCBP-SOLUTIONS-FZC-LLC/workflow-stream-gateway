@@ -111,7 +111,15 @@ func (s *stopAfterOneStreamStore) RangeSince(_ context.Context, target usecase.S
 	return tagged, nil
 }
 
-func (s *stopAfterOneStreamStore) ReadNew(_ context.Context, targets []usecase.StreamTarget, _ time.Duration) ([]domain.Frame, error) {
+func (s *stopAfterOneStreamStore) LatestEntryID(_ context.Context, _ usecase.StreamTarget) (string, error) {
+	return "0-0", nil
+}
+
+func (s *stopAfterOneStreamStore) ReadNew(_ context.Context, positions []usecase.StreamPosition, _ time.Duration) ([]domain.Frame, error) {
+	targets := make([]usecase.StreamTarget, len(positions))
+	for i, p := range positions {
+		targets[i] = p.Target
+	}
 	s.readNewCalls = append(s.readNewCalls, targets)
 	if s.readNewIdx >= len(s.readNewSeq) {
 		return nil, errHandlerTestStop

@@ -44,11 +44,22 @@ func (s *StreamStore) RangeSince(ctx context.Context, target usecase.StreamTarge
 	return toFramesFrom(key, entries), nil
 }
 
-func (s *StreamStore) ReadNew(ctx context.Context, targets []usecase.StreamTarget, block time.Duration) ([]domain.Frame, error) {
-	streams := make([]string, len(targets)*2)
-	for i, t := range targets {
-		streams[i] = keyFor(t)
-		streams[len(targets)+i] = "$"
+func (s *StreamStore) LatestEntryID(ctx context.Context, target usecase.StreamTarget) (string, error) {
+	entries, err := s.client.XRevRangeN(ctx, keyFor(target), "+", "-", 1).Result()
+	if err != nil {
+		return "", fmt.Errorf("valkey xrevrange: %w", err)
+	}
+	if len(entries) == 0 {
+		return "0-0", nil
+	}
+	return entries[0].ID, nil
+}
+
+func (s *StreamStore) ReadNew(ctx context.Context, positions []usecase.StreamPosition, block time.Duration) ([]domain.Frame, error) {
+	streams := make([]string, len(positions)*2)
+	for i, p := range positions {
+		streams[i] = keyFor(p.Target)
+		streams[len(positions)+i] = p.AfterID
 	}
 
 	res, err := s.client.XRead(ctx, &redis.XReadArgs{

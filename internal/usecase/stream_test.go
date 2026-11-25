@@ -41,9 +41,12 @@ type fakeStreamStore struct {
 	// readNewSeq is consumed one entry per ReadNew call; each entry is
 	// either a frame batch or an error. When exhausted, ReadNew returns
 	// errStopTest so tests terminate deterministically without real time.
-	readNewSeq   []readNewResult
-	readNewIdx   int
-	readNewCalls [][]StreamTarget // records the targets passed on every call
+	readNewSeq       []readNewResult
+	readNewIdx       int
+	readNewCalls     [][]StreamTarget   // records the targets passed on every call
+	readNewPositions [][]StreamPosition // records the positions passed on every call
+	latestID         string
+	latestErr        error
 }
 
 type readNewResult struct {
@@ -83,8 +86,20 @@ func (f *fakeStreamStore) RangeSince(_ context.Context, target StreamTarget, _ s
 	return tagSourceKey(key, f.rangeFrames), f.rangeErr
 }
 
-func (f *fakeStreamStore) ReadNew(_ context.Context, targets []StreamTarget, _ time.Duration) ([]domain.Frame, error) {
+func (f *fakeStreamStore) LatestEntryID(_ context.Context, _ StreamTarget) (string, error) {
+	if f.latestID == "" {
+		return "0-0", f.latestErr
+	}
+	return f.latestID, f.latestErr
+}
+
+func (f *fakeStreamStore) ReadNew(_ context.Context, positions []StreamPosition, _ time.Duration) ([]domain.Frame, error) {
+	targets := make([]StreamTarget, len(positions))
+	for i, p := range positions {
+		targets[i] = p.Target
+	}
 	f.readNewCalls = append(f.readNewCalls, targets)
+	f.readNewPositions = append(f.readNewPositions, positions)
 	if f.readNewIdx >= len(f.readNewSeq) {
 		return nil, errStopTest
 	}
@@ -553,6 +568,58 @@ func TestStreamService_Serve_PassesComputedTargetsToReadNew(t *testing.T) {
 		{TenantID: "tenant-a", UserID: "user-1"},
 		{TenantID: "tenant-a", DepartmentID: "dept-a"},
 	}, store.readNewCalls[0])
+}
+
+func TestStreamService_Serve_LiveReadsResumeAfterTheLastDeliveredEntry(t *testing.T) {
+	cases := map[string]struct {
+		store       *fakeStreamStore
+		lastEventID string
+		firstRead   string
+	}{
+		"a fresh connection starts after the newest entry at connect": {
+			store:     &fakeStreamStore{latestID: "50-0"},
+			firstRead: "50-0",
+		},
+		"a resumed connection starts after its cursor": {
+			store:       &fakeStreamStore{latestID: "50-0", oldestID: "10-0", oldestExists: true},
+			lastEventID: compoundID(testPersonalKey, "20-0"),
+			firstRead:   "20-0",
+		},
+		"a backfilled connection starts after the last backfilled entry": {
+			store:       &fakeStreamStore{latestID: "50-0", oldestID: "10-0", oldestExists: true, rangeFrames: []domain.Frame{{ID: "30-0", EventType: "E"}}},
+			lastEventID: compoundID(testPersonalKey, "20-0"),
+			firstRead:   "30-0",
+		},
+		"a connection told to resync starts after the newest entry at connect": {
+			store:       &fakeStreamStore{latestID: "50-0", oldestID: "40-0", oldestExists: true},
+			lastEventID: compoundID(testPersonalKey, "20-0"),
+			firstRead:   "50-0",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tc.store.readNewSeq = []readNewResult{{frames: tagSourceKey(testPersonalKey, []domain.Frame{{ID: "60-0", EventType: "E"}})}, {}}
+			svc := newTestStreamService(tc.store, &fakeLimiter{})
+
+			err := svc.Serve(context.Background(), testTicket(), tc.lastEventID, &fakeSink{})
+
+			assert.ErrorIs(t, err, errStopTest)
+			require.Len(t, tc.store.readNewPositions, 3)
+			assert.Equal(t, tc.firstRead, tc.store.readNewPositions[0][0].AfterID)
+			assert.Equal(t, "60-0", tc.store.readNewPositions[1][0].AfterID, "the read after a delivered entry starts after it")
+			assert.Equal(t, "60-0", tc.store.readNewPositions[2][0].AfterID, "an empty read keeps the position")
+		})
+	}
+}
+
+func TestStreamService_Serve_FailsWhenTheNewestEntryCannotBeRead(t *testing.T) {
+	store := &fakeStreamStore{latestErr: errors.New("valkey down")}
+	svc := newTestStreamService(store, &fakeLimiter{})
+
+	err := svc.Serve(context.Background(), testTicket(), "", &fakeSink{})
+
+	require.EqualError(t, err, "valkey down")
+	assert.Empty(t, store.readNewCalls)
 }
 
 // --- compareStreamIDs / parseStreamID ------------------------------------

@@ -20,11 +20,17 @@ type StreamTarget struct {
 	DepartmentID string
 }
 
+type StreamPosition struct {
+	Target  StreamTarget
+	AfterID string
+}
+
 type StreamStore interface {
 	KeyFor(target StreamTarget) string
 	OldestEntryID(ctx context.Context, target StreamTarget) (id string, exists bool, err error)
+	LatestEntryID(ctx context.Context, target StreamTarget) (string, error)
 	RangeSince(ctx context.Context, target StreamTarget, afterID string) ([]domain.Frame, error)
-	ReadNew(ctx context.Context, targets []StreamTarget, block time.Duration) ([]domain.Frame, error)
+	ReadNew(ctx context.Context, positions []StreamPosition, block time.Duration) ([]domain.Frame, error)
 }
 
 type ConnectionLimiter interface {
@@ -108,6 +114,15 @@ func isTenantWideEligible(roles []string) bool {
 func (s *StreamService) Serve(ctx context.Context, ticket domain.Ticket, lastEventID string, sink FrameSink) error {
 	targets := streamTargets(ticket)
 
+	latest := make(map[string]string, len(targets))
+	for _, t := range targets {
+		id, err := s.store.LatestEntryID(ctx, t)
+		if err != nil {
+			return err
+		}
+		latest[s.store.KeyFor(t)] = id
+	}
+
 	incoming := decodeCursor(lastEventID)
 	cursors := make(map[string]string, len(targets))
 	for _, t := range targets {
@@ -121,8 +136,18 @@ func (s *StreamService) Serve(ctx context.Context, ticket domain.Ticket, lastEve
 	if err != nil {
 		return err
 	}
+	positions := make(map[string]string, len(targets))
+	for key, id := range latest {
+		positions[key] = id
+	}
+	if !resyncRequired {
+		for key, id := range cursors {
+			positions[key] = id
+		}
+	}
 	for _, f := range frames {
 		cursors[f.SourceKey] = f.ID
+		positions[f.SourceKey] = f.ID
 		if err := sink.WriteFrame(encodeCursor(cursors), f.EventType, f.Data); err != nil {
 			return err
 		}
@@ -137,7 +162,11 @@ func (s *StreamService) Serve(ctx context.Context, ticket domain.Ticket, lastEve
 		if ctx.Err() != nil {
 			return nil //nolint:nilerr // the client closing the stream ends it normally
 		}
-		newFrames, err := s.store.ReadNew(ctx, targets, s.heartbeatInterval)
+		reads := make([]StreamPosition, len(targets))
+		for i, t := range targets {
+			reads[i] = StreamPosition{Target: t, AfterID: positions[s.store.KeyFor(t)]}
+		}
+		newFrames, err := s.store.ReadNew(ctx, reads, s.heartbeatInterval)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil //nolint:nilerr // a read cut short by the client closing the stream ends it normally
@@ -153,6 +182,7 @@ func (s *StreamService) Serve(ctx context.Context, ticket domain.Ticket, lastEve
 		}
 		for _, f := range newFrames {
 			cursors[f.SourceKey] = f.ID
+			positions[f.SourceKey] = f.ID
 			if err := sink.WriteFrame(encodeCursor(cursors), f.EventType, f.Data); err != nil {
 				return err
 			}
