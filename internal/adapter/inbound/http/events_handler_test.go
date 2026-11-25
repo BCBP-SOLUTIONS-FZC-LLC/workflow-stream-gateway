@@ -69,13 +69,23 @@ func shippedRoutes(t testing.TB) *domain.RoutingTable {
 func newEventsTestRouter(t testing.TB, store usecase.EventStreamStore) (*gin.Engine, *usecase.FanoutService) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	svc := usecase.NewFanoutService(store, shippedRoutes(t))
+	svc := usecase.NewFanoutService(store, shippedRoutes(t), usecase.CallerCheckOn)
 	r.POST("/internal/events", NewEventsHandler(svc).Ingest)
 	return r, svc
 }
 
+const workflowConsumerCert = `By=spiffe://cluster.local/ns/workflow-app/sa/workflow-stream-gateway;` +
+	`Hash=abc;Subject="";URI=spiffe://cluster.local/ns/workflow-app/sa/workflow-events-consumer`
+
 func postEvent(r *gin.Engine, body string) *httptest.ResponseRecorder {
+	return postEventWithCert(r, body, workflowConsumerCert)
+}
+
+func postEventWithCert(r *gin.Engine, body, clientCert string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/internal/events", strings.NewReader(body))
+	if clientCert != "" {
+		req.Header.Set("X-Forwarded-Client-Cert", clientCert)
+	}
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	return rec
@@ -87,7 +97,7 @@ const validTaskCreatedEnvelope = `{
 	"source": "workflow-execution-svc",
 	"tenant_id": "tenant-a",
 	"time": "2026-08-21T10:00:00Z",
-	"data": {"recipients": [{"kind": "user", "id": "u1"}, {"kind": "user", "id": "u2"}]}
+	"data": {"recipients": [{"kind": "user", "id": "00000000-0000-4000-8000-0000000000a1"}, {"kind": "user", "id": "00000000-0000-4000-8000-0000000000a2"}]}
 }`
 
 func TestEventsHandler_Ingest_KnownTypeSuccess(t *testing.T) {
@@ -157,7 +167,7 @@ func TestEventsHandler_Ingest_KnownTypeInvalidPayloadReturns400(t *testing.T) {
 
 	body := `{
 		"id": "1", "type": "WorkflowTaskCreated", "source": "workflow-execution-svc",
-		"time": "2026-08-21T10:00:00Z", "data": {"recipients": [{"kind": "group", "id": "g1"}]}
+		"time": "2026-08-21T10:00:00Z", "data": {"recipients": [{"kind": "group", "id": "00000000-0000-4000-8000-0000000000f1"}]}
 	}`
 	rec := postEvent(r, body)
 
@@ -181,7 +191,7 @@ func TestEventsHandler_Ingest_ReassignedFansOutToTwo(t *testing.T) {
 	body := `{
 		"id": "1", "type": "WorkflowTaskReassigned", "source": "workflow-execution-svc",
 		"time": "2026-08-21T10:00:00Z", "tenant_id": "tenant-a",
-		"data": {"recipients": [{"kind": "user", "id": "old-1"}, {"kind": "user", "id": "new-1"}]}
+		"data": {"recipients": [{"kind": "user", "id": "00000000-0000-4000-8000-0000000000b1"}, {"kind": "user", "id": "00000000-0000-4000-8000-0000000000b2"}]}
 	}`
 	rec := postEvent(r, body)
 
@@ -230,4 +240,49 @@ func TestEventsHandler_Ingest_AWorkflowTypeFromAnotherSourceIsUnknown(t *testing
 
 	assert.Equal(t, http.StatusOK, rec.Code, "an unlisted (source, type) pair is acknowledged and ignored")
 	assert.Zero(t, store.appendCalls+store.broadcastCalls+store.departmentCalls)
+}
+
+func TestEventsHandler_Ingest_ACallerOutsideTheSectionIsForbidden(t *testing.T) {
+	obstest.Init(t)
+	const metric = "workflow_stream_gateway_internal_auth_rejected_total"
+	before := obstest.Sum(t, metric, map[string]string{"reason": "caller_not_allowed"})
+	llmCert := `By=spiffe://cluster.local/ns/workflow-app/sa/workflow-stream-gateway;Hash=abc;Subject="";` +
+		`URI=spiffe://cluster.local/ns/llm/sa/llm-retrieval-generation`
+	for name, cert := range map[string]string{
+		"another service's consumer":            llmCert,
+		"no client certificate":                 "",
+		"a forged element before the sidecar's": `URI=spiffe://cluster.local/ns/workflow-app/sa/workflow-events-consumer,` + llmCert,
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeEventStore{}
+			r, _ := newEventsTestRouter(t, store)
+
+			rec := postEventWithCert(r, validTaskCreatedEnvelope, cert)
+
+			assert.Equal(t, http.StatusForbidden, rec.Code)
+			assert.Contains(t, rec.Body.String(), `"code":"forbidden"`)
+			assert.Equal(t, 0, store.appendCalls+store.broadcastCalls+store.departmentCalls)
+		})
+	}
+	after := obstest.Sum(t, metric, map[string]string{"reason": "caller_not_allowed"})
+	assert.Equal(t, before+3, after)
+}
+
+func TestCallerFromClientCert(t *testing.T) {
+	for name, tc := range map[string]struct{ header, want string }{
+		"one element":           {`By=spiffe://cluster.local/ns/a/sa/b;Hash=h;URI=spiffe://cluster.local/ns/workflow-app/sa/consumer`, "workflow-app/consumer"},
+		"the last element wins": {`URI=spiffe://cluster.local/ns/x/sa/forged,By=spiffe://td/ns/a/sa/b;URI=spiffe://td/ns/llm/sa/real`, "llm/real"},
+		"a quoted subject with a comma and semicolon": {`By=spiffe://td/ns/a/sa/b;Subject="CN=a,O=b;c";URI=spiffe://td/ns/n/sa/s`, "n/s"},
+		"a quoted URI":                {`By=x;URI="spiffe://td/ns/n/sa/s"`, "n/s"},
+		"empty":                       {"", ""},
+		"no URI":                      {`By=spiffe://td/ns/a/sa/b;Hash=h`, ""},
+		"not spiffe":                  {`URI=https://td/ns/n/sa/s`, ""},
+		"another path":                {`URI=spiffe://td/ns/n/sa/s/extra`, ""},
+		"missing service account":     {`URI=spiffe://td/ns/n`, ""},
+		"forged earlier, none at end": {`URI=spiffe://td/ns/n/sa/s,By=spiffe://td/ns/a/sa/b`, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, callerFromClientCert(tc.header))
+		})
+	}
 }

@@ -87,14 +87,15 @@ make dev       # reads .env
 | `CONNECTION_CAP_PER_USER` | `5` | Concurrent streams per tenant and user |
 | `HEARTBEAT_INTERVAL` | `15s` | |
 | `ROUTING_CONFIG_PATH` | `config/routing.yaml` | The routing file; the chart mounts it from its `routing` values |
+| `CALLER_IDENTITY_CHECK` | `true` | Each routing section accepts only its own callers, read from the mesh's `X-Forwarded-Client-Cert`; `false` only with `APP_ENV` `local`, `dev` or `test` (docker compose and the smoke test) |
 
 A malformed number or duration fails startup rather than falling back to the default.
 
 ### Routing file
 
-[config/routing.yaml](config/routing.yaml) decides which events are rendered and to whom: one section per publishing service, matched by the envelope `source`, each with `tenant_admins` (whether its events also reach the tenant's administrators) and its event types. Every routed payload names its readers in `recipients`, a list of `{kind, id}` with `kind` `user` or `department`; an entry of another shape is refused with 400. A pair of source and type it does not list is acknowledged with 200 and ignored. The browser receives each event as `<service>.<type>`, for example `workflow.WorkflowTaskCreated`. The image does not contain the file: mount it and set `ROUTING_CONFIG_PATH`, as the chart, docker compose and the smoke test do. The file is read at start-up and a missing or malformed one fails startup; the chart carries the same content as its `routing` values (a test checks they match) and rolls the pods when it changes.
+[config/routing.yaml](config/routing.yaml) decides which events are rendered and to whom: one section per publishing service, matched by the envelope `source`, each with its `callers` (the mesh identities, `<namespace>/<service account>`, allowed to post its events; another caller gets 403), `tenant_admins` (whether its events also reach the tenant's administrators) and its event types. Every routed payload names its readers in a required `recipients` list of `{kind, id}`, `kind` `user` or `department` and `id` a lower-case UUID; another shape is refused with 400. A pair of source and type it does not list is acknowledged with 200 and ignored. The browser receives each event as `<service>.<type>`, for example `workflow.WorkflowTaskCreated`. The image does not contain the file: mount it and set `ROUTING_CONFIG_PATH`, as the chart, docker compose and the smoke test do. The file is read at start-up and a missing or malformed one fails startup; the chart carries the same content as its `routing` values (a test checks they match) and rolls the pods when it changes.
 
-To add a publishing service, add a section with its `source`, `tenant_admins` and events to both files, and document its messages in `api/asyncapi.yaml`. Its consumer then needs a caller entry in the chart's `authorizationPolicy.internalRoutes` and, from another namespace, `networkPolicy.otherNamespaceCallers`; a service that uses the shared Workflow-Events Consumer needs its queue and routes in that consumer's topology instead.
+To add a publishing service, add a section with its `source`, `callers`, `tenant_admins` and events to both files, and document its messages in `api/asyncapi.yaml`. Its consumer then needs a caller entry in the chart's `authorizationPolicy.internalRoutes` and, from another namespace, `networkPolicy.otherNamespaceCallers`; a service that uses the shared Workflow-Events Consumer needs its queue and routes in that consumer's topology instead.
 
 ---
 

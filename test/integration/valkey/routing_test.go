@@ -19,7 +19,7 @@ func TestFanout_AnIngestedEventIsStoredUnderItsServicePrefixedName(t *testing.T)
 	client := newClient(t)
 	routes, err := routingfile.Load("../../../config/routing.yaml")
 	require.NoError(t, err)
-	fanout := usecase.NewFanoutService(valkey.NewEventStore(client, 10*time.Minute, 15*time.Minute), routes)
+	fanout := usecase.NewFanoutService(valkey.NewEventStore(client, 10*time.Minute, 15*time.Minute), routes, usecase.CallerCheckOff)
 	streams := valkey.NewStreamStore(client)
 	ctx := context.Background()
 
@@ -27,16 +27,16 @@ func TestFanout_AnIngestedEventIsStoredUnderItsServicePrefixedName(t *testing.T)
 		Source:      "workflow-execution-svc",
 		EventType:   "WorkflowTaskCreated",
 		TenantID:    "t-routing",
-		Payload:     []byte(`{"recipients":[{"kind":"user","id":"u-routing"},{"kind":"department","id":"d-routing"}]}`),
+		Payload:     []byte(`{"recipients":[{"kind":"user","id":"00000000-0000-4000-8000-0000000001a1"},{"kind":"department","id":"00000000-0000-4000-8000-0000000001d1"}]}`),
 		RawEnvelope: []byte(`{"type":"WorkflowTaskCreated"}`),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "workflow.WorkflowTaskCreated", name)
 
 	for _, target := range []usecase.StreamTarget{
-		{TenantID: "t-routing", UserID: "u-routing"},
+		{TenantID: "t-routing", UserID: "00000000-0000-4000-8000-0000000001a1"},
 		{TenantID: "t-routing"},
-		{TenantID: "t-routing", DepartmentID: "d-routing"},
+		{TenantID: "t-routing", DepartmentID: "00000000-0000-4000-8000-0000000001d1"},
 	} {
 		frames, err := streams.RangeSince(ctx, target, "0-0")
 		require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestFanout_AnLLMEventReachesItsRecipientsAndNotTheTenantTier(t *testing.T) 
 	client := newClient(t)
 	routes, err := routingfile.Load("../../../config/routing.yaml")
 	require.NoError(t, err)
-	fanout := usecase.NewFanoutService(valkey.NewEventStore(client, 10*time.Minute, 15*time.Minute), routes)
+	fanout := usecase.NewFanoutService(valkey.NewEventStore(client, 10*time.Minute, 15*time.Minute), routes, usecase.CallerCheckOff)
 	streams := valkey.NewStreamStore(client)
 	ctx := context.Background()
 
@@ -57,15 +57,15 @@ func TestFanout_AnLLMEventReachesItsRecipientsAndNotTheTenantTier(t *testing.T) 
 		Source:      "llm-retrieval-generation",
 		EventType:   "GenerationProgressed",
 		TenantID:    "t-llm",
-		Payload:     []byte(`{"recipients":[{"kind":"user","id":"u-llm"},{"kind":"department","id":"d-llm"}]}`),
+		Payload:     []byte(`{"recipients":[{"kind":"user","id":"00000000-0000-4000-8000-0000000002a1"},{"kind":"department","id":"00000000-0000-4000-8000-0000000002d1"}]}`),
 		RawEnvelope: []byte(`{"type":"GenerationProgressed"}`),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "llm.GenerationProgressed", name)
 
 	for _, target := range []usecase.StreamTarget{
-		{TenantID: "t-llm", UserID: "u-llm"},
-		{TenantID: "t-llm", DepartmentID: "d-llm"},
+		{TenantID: "t-llm", UserID: "00000000-0000-4000-8000-0000000002a1"},
+		{TenantID: "t-llm", DepartmentID: "00000000-0000-4000-8000-0000000002d1"},
 	} {
 		frames, err := streams.RangeSince(ctx, target, "0-0")
 		require.NoError(t, err)

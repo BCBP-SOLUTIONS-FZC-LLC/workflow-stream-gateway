@@ -26,6 +26,32 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 5, cfg.ConnectionCapPerUser)
 	assert.Equal(t, 15*time.Second, cfg.HeartbeatInterval)
 	assert.Equal(t, "config/routing.yaml", cfg.RoutingConfigPath)
+	assert.True(t, cfg.CallerIdentityCheck, "the caller check is on unless switched off")
+}
+
+func TestLoad_TheCallerCheckMayBeOffOnlyWithoutAMesh(t *testing.T) {
+	for _, env := range []string{"local", "dev", "test"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv("APP_ENV", env)
+			t.Setenv("CALLER_IDENTITY_CHECK", "false")
+			cfg, err := Load()
+			require.NoError(t, err)
+			assert.False(t, cfg.CallerIdentityCheck)
+		})
+	}
+	for _, env := range []string{"staging", "prod"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv("APP_ENV", env)
+			t.Setenv("CALLER_IDENTITY_CHECK", "false")
+			_, err := Load()
+			assert.ErrorContains(t, err, "CALLER_IDENTITY_CHECK")
+		})
+	}
+	t.Run("not a boolean", func(t *testing.T) {
+		t.Setenv("CALLER_IDENTITY_CHECK", "maybe")
+		_, err := Load()
+		assert.ErrorContains(t, err, "CALLER_IDENTITY_CHECK")
+	})
 }
 
 func TestLoad_EnvOverrides(t *testing.T) {

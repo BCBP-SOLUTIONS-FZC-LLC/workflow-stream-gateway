@@ -19,7 +19,7 @@ func newRouter(cfg *config.Config, ginCfg gincommon.Config, client *redis.Client
 	ticketHandler := sgHTTP.NewTicketHandler(ticketService)
 
 	eventStore := sgValkey.NewEventStore(client, cfg.StreamRetentionWindow, cfg.StreamKeyTTL)
-	fanoutService := usecase.NewFanoutService(eventStore, routes)
+	fanoutService := usecase.NewFanoutService(eventStore, routes, usecase.CallerCheck(cfg.CallerIdentityCheck))
 	eventsHandler := sgHTTP.NewEventsHandler(fanoutService)
 
 	streamStore := sgValkey.NewStreamStore(client)

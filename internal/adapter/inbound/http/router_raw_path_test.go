@@ -19,7 +19,7 @@ func routerConfigWithFakes(events *fakeEventStore, tickets *fakeTicketStore) Rou
 	cfg := testRouterConfig()
 	ticketService := usecase.NewTicketService(tickets, time.Minute, 10, time.Minute)
 	cfg.TicketHandler = NewTicketHandler(ticketService)
-	cfg.EventsHandler = NewEventsHandler(usecase.NewFanoutService(events, loadShippedRoutes()))
+	cfg.EventsHandler = NewEventsHandler(usecase.NewFanoutService(events, loadShippedRoutes(), usecase.CallerCheckOn))
 	cfg.StreamHandler = NewStreamHandler(usecase.NewStreamService(ticketService, nil, nil, 5, time.Minute, 15*time.Second))
 	return cfg
 }
@@ -28,6 +28,7 @@ func systemCallerPost(target, body string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
 	req.Header.Set("x-user-id", "iam-system")
 	req.Header.Set("x-tenant-roles", "iam-system")
+	req.Header.Set(clientCertHeader, workflowConsumerCert)
 	return req
 }
 

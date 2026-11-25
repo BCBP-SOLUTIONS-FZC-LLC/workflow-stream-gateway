@@ -37,6 +37,8 @@ type Config struct {
 	HeartbeatInterval time.Duration
 
 	RoutingConfigPath string
+
+	CallerIdentityCheck bool
 }
 
 func Load() (*Config, error) {
@@ -50,6 +52,11 @@ func Load() (*Config, error) {
 	}
 	envInt := func(key string, fallback int) int {
 		v, err := getEnvInt(key, fallback)
+		record(err)
+		return v
+	}
+	envBool := func(key string, fallback bool) bool {
+		v, err := getEnvBool(key, fallback)
 		record(err)
 		return v
 	}
@@ -68,6 +75,8 @@ func Load() (*Config, error) {
 		MetricsPort: envInt("METRICS_PORT", 9090),
 
 		RoutingConfigPath: getEnvOrDefault("ROUTING_CONFIG_PATH", "config/routing.yaml"),
+
+		CallerIdentityCheck: envBool("CALLER_IDENTITY_CHECK", true),
 
 		ValkeyAddr:         getEnvOrDefault("VALKEY_ADDR", "localhost:6379"),
 		ValkeyPassword:     getEnvOrDefault("VALKEY_PASSWORD", ""),
@@ -99,9 +108,14 @@ func Load() (*Config, error) {
 
 var appEnvs = []string{"local", "dev", "test", "staging", "prod"}
 
+var meshlessAppEnvs = []string{"local", "dev", "test"}
+
 func (c *Config) validate() error {
 	if !slices.Contains(appEnvs, c.AppEnv) {
 		return fmt.Errorf("APP_ENV must be one of %s", strings.Join(appEnvs, ", "))
+	}
+	if !c.CallerIdentityCheck && !slices.Contains(meshlessAppEnvs, c.AppEnv) {
+		return fmt.Errorf("CALLER_IDENTITY_CHECK may be false only when APP_ENV is one of %s", strings.Join(meshlessAppEnvs, ", "))
 	}
 	if c.HTTPPort < 1 || c.HTTPPort > 65535 {
 		return fmt.Errorf("HTTP_PORT must be in [1, 65535]")
@@ -150,6 +164,18 @@ func getEnvInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
 	}
 	return i, nil
+}
+
+func getEnvBool(key string, fallback bool) (bool, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback, fmt.Errorf("%s must be true or false, got %q", key, v)
+	}
+	return b, nil
 }
 
 func getEnvDuration(key string, fallback time.Duration) (time.Duration, error) {

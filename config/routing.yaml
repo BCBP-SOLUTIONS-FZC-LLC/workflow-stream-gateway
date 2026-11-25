@@ -5,6 +5,8 @@
 # listed is acknowledged with 200 and ignored. Every listed event names its
 # readers in the payload's `recipients` list of {kind, id}: a `user` entry
 # reaches that user, a `department` entry reaches that department's tier.
+# `callers` names the mesh identities (<namespace>/<service account>) allowed to
+# post the section's events; another caller is refused with 403.
 # `tenant_admins` says whether the service's events also reach the tenant's
 # administrators. The browser receives each event as `<service>.<type>`.
 #
@@ -14,6 +16,7 @@ version: 1
 services:
   workflow:
     source: workflow-execution-svc
+    callers: [workflow-app/workflow-events-consumer]
     tenant_admins: true
     events:
       - WorkflowTaskCreated
@@ -34,6 +37,7 @@ services:
       - WorkflowInstanceFinished
   llm:
     source: llm-retrieval-generation
+    callers: [llm/llm-retrieval-generation]
     tenant_admins: false
     events:
       - GenerationStarted

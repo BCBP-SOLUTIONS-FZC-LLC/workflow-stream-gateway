@@ -3,10 +3,12 @@ package chart_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/adapter/outbound/routingfile"
 )
@@ -120,4 +122,54 @@ func checksum(t *testing.T, out string) string {
 	}
 	t.Fatal("no Deployment in the render")
 	return ""
+}
+
+func TestHelmRouting_ThePodsSidecarSetsTheCallerCertificateHeaderItself(t *testing.T) {
+	out, err := helmRender(t, "gw")
+	require.NoError(t, err, out)
+
+	for _, doc := range decodeAll[renderedDoc](t, out) {
+		if doc.Kind != "Deployment" {
+			continue
+		}
+		config := doc.Spec.Template.Metadata.Annotations["proxy.istio.io/config"]
+		assert.Contains(t, config, "forwardedClientCert: SANITIZE_SET",
+			"the sidecar replaces any client-sent X-Forwarded-Client-Cert, so the gateway reads only the mesh's caller identity")
+		return
+	}
+	t.Fatal("no Deployment in the render")
+}
+
+func TestHelmRouting_EveryRoutingCallerIsAdmittedByTheMeshPolicy(t *testing.T) {
+	out, err := helmRender(t, "gw")
+	require.NoError(t, err, out)
+	var routing string
+	for _, doc := range decodeAll[renderedDoc](t, out) {
+		if doc.Kind == "ConfigMap" && doc.Metadata.Name == "workflow-stream-gateway-routing" {
+			routing = doc.Data["routing.yaml"]
+		}
+	}
+	var file struct {
+		Services map[string]struct {
+			Callers []string `yaml:"callers"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal([]byte(routing), &file))
+	policy := renderPolicy(t, "gw")
+
+	admitted := map[string]bool{}
+	for _, rule := range policy.Spec.Rules {
+		for _, from := range rule.From {
+			for _, p := range from.Source.Principals {
+				admitted[p] = true
+			}
+		}
+	}
+	for service, s := range file.Services {
+		require.NotEmpty(t, s.Callers, service)
+		for _, caller := range s.Callers {
+			ns, sa, _ := strings.Cut(caller, "/")
+			assert.True(t, admitted[principal(ns, sa)], "%s caller %s is not admitted by the AuthorizationPolicy", service, caller)
+		}
+	}
 }

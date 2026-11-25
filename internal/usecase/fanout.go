@@ -13,6 +13,15 @@ var ErrUnknownEventType = errors.New("unknown event type")
 
 var ErrInvalidPayload = errors.New("event payload does not match expected schema for its type")
 
+var ErrCallerNotAllowed = errors.New("the caller may not publish for this source")
+
+type CallerCheck bool
+
+const (
+	CallerCheckOn  CallerCheck = true
+	CallerCheckOff CallerCheck = false
+)
+
 type target struct {
 	users       []string
 	departments []string
@@ -28,7 +37,7 @@ func resolveTarget(payload []byte) (target, error) {
 	}
 	raw := fields["recipients"]
 	if len(raw) == 0 || string(raw) == "null" {
-		return target{}, nil
+		return target{}, fmt.Errorf("%w: recipients is required", ErrInvalidPayload)
 	}
 	var entries []*domain.Recipient
 	if err := json.Unmarshal(raw, &entries); err != nil {
@@ -64,6 +73,7 @@ type EventStreamStore interface {
 
 type IngestInput struct {
 	Source      string
+	Caller      string
 	EventType   string
 	TenantID    string
 	Payload     []byte
@@ -71,12 +81,13 @@ type IngestInput struct {
 }
 
 type FanoutService struct {
-	store  EventStreamStore
-	routes *domain.RoutingTable
+	store       EventStreamStore
+	routes      *domain.RoutingTable
+	callerCheck CallerCheck
 }
 
-func NewFanoutService(store EventStreamStore, routes *domain.RoutingTable) *FanoutService {
-	return &FanoutService{store: store, routes: routes}
+func NewFanoutService(store EventStreamStore, routes *domain.RoutingTable, callerCheck CallerCheck) *FanoutService {
+	return &FanoutService{store: store, routes: routes, callerCheck: callerCheck}
 }
 
 func (s *FanoutService) Ingest(ctx context.Context, in IngestInput) (string, error) {
@@ -85,6 +96,9 @@ func (s *FanoutService) Ingest(ctx context.Context, in IngestInput) (string, err
 		return "", ErrUnknownEventType
 	}
 	name := route.StreamEventType()
+	if s.callerCheck == CallerCheckOn && !route.Admits(in.Caller) {
+		return name, ErrCallerNotAllowed
+	}
 	t, err := resolveTarget(in.Payload)
 	if err != nil {
 		return name, err

@@ -57,7 +57,7 @@ func registerServiceMetrics() {
 		"event_type"))
 	InternalAuthRejectedTotal = must(gincommon.NewCounterVec(nil,
 		"workflow_stream_gateway_internal_auth_rejected_total",
-		"Internal-route requests refused for lacking the system caller identity, by reason (missing_user or missing_role).",
+		"Internal-route requests refused, by reason: missing_user or missing_role (no system caller identity), caller_not_allowed (the caller may not publish for the event's source).",
 		"reason"))
 
 	preInitializeClosedLabelSets()
@@ -70,7 +70,7 @@ func preInitializeClosedLabelSets() {
 	for _, reason := range []string{"cap_exceeded", "invalid_ticket", "valkey_unavailable"} {
 		ConnectionsRejectedTotal.WithLabelValues(reason)
 	}
-	for _, reason := range []string{"missing_user", "missing_role"} {
+	for _, reason := range []string{"missing_user", "missing_role", "caller_not_allowed"} {
 		InternalAuthRejectedTotal.WithLabelValues(reason)
 	}
 }

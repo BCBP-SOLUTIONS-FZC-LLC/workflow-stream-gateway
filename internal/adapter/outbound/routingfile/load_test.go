@@ -18,7 +18,7 @@ func writeFile(t *testing.T, content string) string {
 	return path
 }
 
-const minimal = "version: 1\nservices:\n  workflow:\n    source: s\n    tenant_admins: true\n    events: [T]\n"
+const minimal = "version: 1\nservices:\n  workflow:\n    source: s\n    callers: [ns/sa]\n    tenant_admins: true\n    events: [T]\n"
 
 func TestLoad_ReadsAValidFile(t *testing.T) {
 	table, err := Load(writeFile(t, minimal))
@@ -63,8 +63,8 @@ func TestLoad_AnEmptyFileSaysItIsEmpty(t *testing.T) {
 func TestLoad_RefusesAnUnknownOrMisspeltKey(t *testing.T) {
 	for name, content := range map[string]string{
 		"top level":     minimal + "extra: true\n",
-		"misspelt key":  "version: 1\nservice:\n  workflow:\n    source: s\n    tenant_admins: true\n    events: [T]\n",
-		"service field": "version: 1\nservices:\n  workflow:\n    source: s\n    queue: q\n    tenant_admins: true\n    events: [T]\n",
+		"misspelt key":  "version: 1\nservice:\n  workflow:\n    source: s\n    callers: [ns/sa]\n    tenant_admins: true\n    events: [T]\n",
+		"service field": "version: 1\nservices:\n  workflow:\n    source: s\n    callers: [ns/sa]\n    queue: q\n    tenant_admins: true\n    events: [T]\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Load(writeFile(t, content))
@@ -75,7 +75,7 @@ func TestLoad_RefusesAnUnknownOrMisspeltKey(t *testing.T) {
 }
 
 func TestLoad_RefusesTheRetiredPerEventFieldForm(t *testing.T) {
-	_, err := Load(writeFile(t, "version: 1\nservices:\n  workflow:\n    source: s\n    tenant_admins: true\n"+
+	_, err := Load(writeFile(t, "version: 1\nservices:\n  workflow:\n    source: s\n    callers: [ns/sa]\n    tenant_admins: true\n"+
 		"    events:\n      T: {recipients: [u], department: d}\n"))
 
 	require.Error(t, err)
@@ -83,14 +83,14 @@ func TestLoad_RefusesTheRetiredPerEventFieldForm(t *testing.T) {
 }
 
 func TestLoad_RefusesAServiceWithoutTenantAdmins(t *testing.T) {
-	_, err := Load(writeFile(t, "version: 1\nservices:\n  workflow:\n    source: s\n    events: [T]\n"))
+	_, err := Load(writeFile(t, "version: 1\nservices:\n  workflow:\n    source: s\n    callers: [ns/sa]\n    events: [T]\n"))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tenant_admins is required")
 }
 
 func TestLoad_RefusesATenantAdminsThatIsNotTrueOrFalse(t *testing.T) {
-	_, err := Load(writeFile(t, "version: 1\nservices:\n  workflow:\n    source: s\n    tenant_admins: maybe\n    events: [T]\n"))
+	_, err := Load(writeFile(t, "version: 1\nservices:\n  workflow:\n    source: s\n    callers: [ns/sa]\n    tenant_admins: maybe\n    events: [T]\n"))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parsing")
@@ -111,7 +111,7 @@ func TestLoad_RefusesAFileThatIsNotYAML(t *testing.T) {
 }
 
 func TestLoad_RefusesAFileTheRoutingRulesReject(t *testing.T) {
-	_, err := Load(writeFile(t, "version: 2\nservices:\n  workflow:\n    source: s\n    tenant_admins: true\n    events: [T]\n"))
+	_, err := Load(writeFile(t, "version: 2\nservices:\n  workflow:\n    source: s\n    callers: [ns/sa]\n    tenant_admins: true\n    events: [T]\n"))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "version must be 1")

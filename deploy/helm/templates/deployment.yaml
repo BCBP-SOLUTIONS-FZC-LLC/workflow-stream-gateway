@@ -25,6 +25,11 @@ spec:
       labels:
         {{- include "workflow-stream-gateway.selectorLabels" . | nindent 8 }}
       annotations:
+        # The sidecar writes the caller's mesh identity into X-Forwarded-Client-Cert and drops any
+        # client-sent value; the internal events route binds each source to its callers by it.
+        proxy.istio.io/config: |
+          proxyHeaders:
+            forwardedClientCert: SANITIZE_SET
         # Roll the pods when the routing file changes; it is read once at start-up.
         checksum/routing: {{ include (print $.Template.BasePath "/configmap-routing.yaml") . | sha256sum }}
         {{- if .Values.existingSecret }}

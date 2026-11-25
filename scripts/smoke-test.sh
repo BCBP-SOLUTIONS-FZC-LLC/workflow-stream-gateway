@@ -34,7 +34,7 @@ fi
 docker network create "$net" >/dev/null
 docker run -d --name "$net-valkey" --network "$net" valkey/valkey:8-alpine >/dev/null
 docker run -d --name "$net-gw" --network "$net" -p "$port:8080" \
-  -e APP_ENV=test -e VALKEY_ADDR="$net-valkey:6379" \
+  -e APP_ENV=test -e CALLER_IDENTITY_CHECK=false -e VALKEY_ADDR="$net-valkey:6379" \
   -e OTEL_EXPORTER_OTLP_ENDPOINT=none \
   -e ROUTING_CONFIG_PATH=/etc/workflow-stream-gateway/routing.yaml \
   -v "$PWD/config/routing.yaml:/etc/workflow-stream-gateway/routing.yaml:ro" \

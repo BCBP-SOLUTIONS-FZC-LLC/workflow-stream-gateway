@@ -251,6 +251,7 @@ routing:
   services:
     workflow:
       source: workflow-execution-svc
+      callers: [workflow-app/workflow-events-consumer]
       tenant_admins: true
       events:
         - WorkflowTaskCreated
@@ -271,6 +272,7 @@ routing:
         - WorkflowInstanceFinished
     llm:
       source: llm-retrieval-generation
+      callers: [llm/llm-retrieval-generation]
       tenant_admins: false
       events:
         - GenerationStarted

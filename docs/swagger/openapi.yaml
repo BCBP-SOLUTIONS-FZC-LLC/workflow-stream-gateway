@@ -373,8 +373,9 @@ paths:
         "400":
           description: >
             Malformed envelope (unparseable JSON, or missing id/type/source/time), or a
-            payload that is not a JSON object, a `recipients` that is not a list, or an
-            entry that is not {kind: user or department, id of 1 to 128 characters}.
+            payload that is not a JSON object, a missing or null `recipients`, a `recipients`
+            that is not a list, or an entry that is not {kind: user or department, id: a
+            lower-case UUID}.
             Non-retryable.
           content:
             application/problem+json:
@@ -382,6 +383,14 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         "401":
           description: Missing or invalid internal caller identity.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        "403":
+          description: >
+            The caller's mesh identity (the last element of X-Forwarded-Client-Cert, set by the
+            sidecar) is not among the callers the routing file names for the event's source.
           content:
             application/problem+json:
               schema:

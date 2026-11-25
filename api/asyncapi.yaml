@@ -8,8 +8,9 @@ info:
     for the Workflow Execution Service, and the LLM subsystem's own consumer for
     its generation events. Which events are rendered comes from the routing file
     (config/routing.yaml), keyed by the envelope source, then the event type; the
-    channels below are its sections. A pair of source and type the routing file
-    does not list is acknowledged with 200 and ignored. Every routed payload names
+    channels below are its sections. Each section names the mesh identities allowed
+    to post its events; another caller is refused with 403. A pair of source and
+    type the routing file does not list is acknowledged with 200 and ignored. Every routed payload names
     its readers in `recipients`, a list of {kind, id}: a `user` entry reaches that
     user's streams in the envelope's tenant, a `department` entry reaches the
     streams whose ticket carries that department. A service whose section sets
@@ -254,8 +255,8 @@ components:
         recipients:
           type: array
           description: >
-            Who receives the event. Empty when the producer names no one. A repeated
-            entry is written once.
+            Who receives the event; required, and empty when the producer names no
+            one. A repeated entry is written once.
           items: { $ref: '#/components/schemas/Recipient' }
     Recipient:
       type: object
@@ -263,4 +264,4 @@ components:
       required: [kind, id]
       properties:
         kind: { type: string, enum: [user, department] }
-        id: { type: string, minLength: 1, maxLength: 128 }
+        id: { type: string, format: uuid, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' }

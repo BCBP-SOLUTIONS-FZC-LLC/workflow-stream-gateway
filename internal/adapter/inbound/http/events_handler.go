@@ -45,6 +45,7 @@ func (h *EventsHandler) Ingest(c *gin.Context) {
 
 	name, err := h.fanout.Ingest(c.Request.Context(), usecase.IngestInput{
 		Source:      envelope.Source,
+		Caller:      callerFromClientCert(c.GetHeader(clientCertHeader)),
 		EventType:   envelope.Type,
 		TenantID:    envelope.TenantID,
 		Payload:     envelope.Payload,
@@ -55,6 +56,9 @@ func (h *EventsHandler) Ingest(c *gin.Context) {
 	case errors.Is(err, usecase.ErrUnknownEventType):
 		recordEventIngest(unknownEventType, "ok")
 		c.Status(http.StatusOK)
+	case errors.Is(err, usecase.ErrCallerNotAllowed):
+		recordCallerRejection()
+		writeProblem(c, http.StatusForbidden, "forbidden", "the caller may not publish events for this source")
 	case errors.Is(err, usecase.ErrInvalidPayload):
 		recordEventIngest(name, "bad_payload")
 		writeProblem(c, http.StatusBadRequest, "invalid-payload", err.Error())
@@ -64,6 +68,12 @@ func (h *EventsHandler) Ingest(c *gin.Context) {
 	default:
 		recordEventIngest(name, "ok")
 		c.Status(http.StatusOK)
+	}
+}
+
+func recordCallerRejection() {
+	if observability.InternalAuthRejectedTotal != nil {
+		observability.InternalAuthRejectedTotal.WithLabelValues("caller_not_allowed").Inc()
 	}
 }
 
