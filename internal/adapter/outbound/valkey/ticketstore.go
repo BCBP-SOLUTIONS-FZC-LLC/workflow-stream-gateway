@@ -21,16 +21,19 @@ func NewTicketStore(client redis.Cmdable) *TicketStore {
 	return &TicketStore{client: client}
 }
 
+var mintRateScript = redis.NewScript(`
+local count = redis.call('INCR', KEYS[1])
+if redis.call('PTTL', KEYS[1]) < 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+return count
+`)
+
 func (s *TicketStore) AllowMint(ctx context.Context, tenantID, userID string, max int, window time.Duration) (bool, error) {
 	key := fmt.Sprintf("sse:ticketrate:%s:%s", tenantID, userID)
-	count, err := s.client.Incr(ctx, key).Result()
+	count, err := mintRateScript.Run(ctx, s.client, []string{key}, window.Milliseconds()).Int64()
 	if err != nil {
-		return false, fmt.Errorf("valkey incr: %w", err)
-	}
-	if count == 1 {
-		if err := s.client.Expire(ctx, key, window).Err(); err != nil {
-			return false, fmt.Errorf("valkey expire: %w", err)
-		}
+		return false, fmt.Errorf("valkey mint rate: %w", err)
 	}
 	return count <= int64(max), nil
 }

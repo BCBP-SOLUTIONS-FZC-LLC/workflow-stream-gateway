@@ -4,6 +4,7 @@ package valkey_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,18 +89,45 @@ func TestStreamStore_ReadNewBlocksForTheNextEntry(t *testing.T) {
 	ctx := context.Background()
 	personal := usecase.StreamTarget{TenantID: "t1", UserID: "u1"}
 
-	empty, err := streams.ReadNew(ctx, []usecase.StreamTarget{personal}, 100*time.Millisecond)
+	empty, err := streams.ReadNew(ctx, []usecase.StreamPosition{{Target: personal, AfterID: "0-0"}}, 100*time.Millisecond)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 
+	reader := redis.NewClient(&redis.Options{Addr: client.Options().Addr, ClientName: "blocked-reader"})
+	t.Cleanup(func() { _ = reader.Close() })
+	type readResult struct {
+		frames []domain.Frame
+		err    error
+	}
+	done := make(chan readResult, 1)
 	go func() {
-		time.Sleep(200 * time.Millisecond)
-		_ = events.AppendEvent(context.Background(), "t1", "u1", "WorkflowTaskCreated", []byte(`{"n":1}`))
+		frames, err := valkey.NewStreamStore(reader).ReadNew(ctx, []usecase.StreamPosition{{Target: personal, AfterID: "0-0"}}, time.Minute)
+		done <- readResult{frames, err}
 	}()
-	frames, err := streams.ReadNew(ctx, []usecase.StreamTarget{personal}, 3*time.Second)
-	require.NoError(t, err)
-	require.Len(t, frames, 1)
-	assert.Equal(t, "WorkflowTaskCreated", frames[0].EventType)
+
+	require.Eventually(t, func() bool {
+		clients, err := client.ClientList(ctx).Result()
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(clients, "\n") {
+			if strings.Contains(line, "name=blocked-reader") && strings.Contains(line, "cmd=xread") && strings.Contains(line, "flags=b") {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 5*time.Millisecond, "the reader is blocked in XREAD before the event is appended")
+	select {
+	case got := <-done:
+		t.Fatalf("ReadNew returned before any entry was appended: %+v", got)
+	default:
+	}
+
+	require.NoError(t, events.AppendEvent(ctx, "t1", "u1", "WorkflowTaskCreated", []byte(`{"n":1}`)))
+	got := <-done
+	require.NoError(t, got.err)
+	require.Len(t, got.frames, 1)
+	assert.Equal(t, "WorkflowTaskCreated", got.frames[0].EventType)
 }
 
 func TestNewClient_FailsWhenValkeyIsUnreachable(t *testing.T) {
@@ -134,7 +162,7 @@ func TestAdapters_SurfaceAValkeyOutage(t *testing.T) {
 	assert.Error(t, err)
 	_, err = streams.RangeSince(ctx, target, "0-0")
 	assert.Error(t, err)
-	_, err = streams.ReadNew(ctx, []usecase.StreamTarget{target}, 10*time.Millisecond)
+	_, err = streams.ReadNew(ctx, []usecase.StreamPosition{{Target: target, AfterID: "0-0"}}, 10*time.Millisecond)
 	assert.Error(t, err)
 }
 

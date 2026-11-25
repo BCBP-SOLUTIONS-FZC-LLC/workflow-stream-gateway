@@ -103,6 +103,24 @@ components:
           type: integer
           example: 60
 
+    PlatformError:
+      type: object
+      description: >
+        The shared platform middleware's own flat error body, sent when it refuses a request
+        before this service's handler runs (for example a gateway identity that is missing).
+      required: [error, status]
+      properties:
+        error:
+          type: string
+          example: "missing or invalid authentication headers"
+        status:
+          type: integer
+          example: 401
+        trace_id:
+          type: string
+        request_id:
+          type: string
+
     ProblemDetails:
       type: object
       description: RFC-9457 problem-details body, matching this platform's shared error convention.
@@ -254,11 +272,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/TicketMintResponse'
         "401":
-          description: The gateway identity headers are missing; only a request that bypassed the gateway lacks them.
+          description: >
+            The gateway identity headers are missing, or the tenant, user or a
+            department id is not a lower-case UUID; only a request that bypassed
+            the gateway sends either. A missing identity is refused by the shared
+            platform middleware in its own flat body (application/json); an id in
+            the wrong form by this service (application/problem+json).
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformError'
         "413":
           description: Request body larger than 10 MiB. Non-retryable.
           content:
@@ -372,8 +398,8 @@ paths:
             pair of source and type (accepted and ignored).
         "400":
           description: >
-            Malformed envelope (unparseable JSON, or missing id/type/source/time), or a
-            payload that is not a JSON object, a missing or null `recipients`, a `recipients`
+            Malformed envelope (unparseable JSON, or missing id/type/source/time), a
+            `tenant_id` that is not a lower-case UUID, or a payload that is not a JSON object, a missing or null `recipients`, a `recipients`
             that is not a list, or an entry that is not {kind: user or department, id: a
             lower-case UUID}.
             Non-retryable.

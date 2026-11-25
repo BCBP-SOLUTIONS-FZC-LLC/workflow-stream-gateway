@@ -12,6 +12,7 @@ HADOLINT_VERSION    := v2.12.0
 TRIVY_VERSION       := 0.71.2
 KUBECONFORM_VERSION := 0.8.0
 ACTIONLINT_VERSION  := v1.7.12
+OASDIFF_VERSION     := v1.32.1
 
 TOOLS_DIR    := .tools
 BIN_DIR      := bin
@@ -25,6 +26,7 @@ HADOLINT    := $(TOOLS_DIR)/hadolint
 TRIVY       := $(TOOLS_DIR)/trivy
 KUBECONFORM := $(TOOLS_DIR)/kubeconform
 ACTIONLINT  := $(TOOLS_DIR)/actionlint
+OASDIFF     := $(TOOLS_DIR)/oasdiff
 HELM        ?= helm
 
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -32,16 +34,18 @@ LDFLAGS       := -X main.version=$(BUILD_VERSION)
 
 COVER_PROFILE   := $(COVERAGE_DIR)/coverage.out
 COVER_HTML      := $(COVERAGE_DIR)/coverage.html
-COVER_THRESHOLD := 90
+COVER_THRESHOLD := 97
 
 # internal/observability keeps the error-wrapping branches of the telemetry
 # initialisation, which fail only when a platform library refuses its own identity.
-COVER_PKG_FLOORS := internal/observability:85
+# cmd/server keeps main itself (it exits the process), and the logger, telemetry,
+# Valkey close and listener shutdown failures, which no test can provoke.
+COVER_PKG_FLOORS := internal/observability:90 cmd/server:85
 
 .PHONY: test-integration merge-coverage helm-lint helm-test helm-policy-check helm-namespace-check helm-authz-check lint-workflows pin-base-images metrics-lint metrics-inventory all tools setup install-hooks build dev test test-ci \
         cover cover-func cover-html cover-check cover-check-pkg \
         tidy fmt-check fix check lint lint-fix arch-lint vuln \
-        docker-build docker-lint docker-trivy docker-check smoke-test \
+        docker-build docker-lint docker-trivy docker-check smoke-test fuzz hurl fuzz-api fuzz-internal-api blackbox blackbox-up blackbox-down alerts-test contract-breaking \
         clean help
 
 all: build
@@ -86,6 +90,7 @@ tools:
 	  "https://github.com/aquasecurity/trivy/releases/download/v$(TRIVY_VERSION)/trivy_$(TRIVY_VERSION)_$$TRIVY_OS_ARCH.tar.gz" && \
 	tar -xzf /tmp/trivy.tar.gz -C $(TOOLS_DIR) trivy && rm /tmp/trivy.tar.gz
 	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+	GOBIN=$(PWD)/$(TOOLS_DIR) go install github.com/oasdiff/oasdiff@$(OASDIFF_VERSION)
 	@OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); ARCH=$$(uname -m); \
 	if [ "$$ARCH" = "aarch64" ]; then ARCH="arm64"; fi; \
 	if [ "$$ARCH" = "x86_64" ]; then ARCH="amd64"; fi; \
@@ -108,9 +113,9 @@ dev:
 test:
 	@mkdir -p $(COVERAGE_DIR)
 	go test -race -count=1 \
-	    -coverpkg=./internal/... \
+	    -coverpkg=./internal/...,./cmd/... \
 	    -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
-	    ./internal/...
+	    ./internal/... ./cmd/... ./test/monitoring/...
 	@go tool cover -func=$(COVERAGE_DIR)/unit.out | awk '/^total:/{print "total:", $$NF}'
 
 ## test-integration: Run integration tests; containers start through testcontainers-go
@@ -118,9 +123,70 @@ test-integration:
 	@mkdir -p $(COVERAGE_DIR)
 	TESTCONTAINERS_RYUK_DISABLED=true \
 	go test -race -count=1 -tags integration \
-	    -coverpkg=./internal/... \
+	    -coverpkg=./internal/...,./cmd/... \
 	    -coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
-	    ./test/integration/...
+	    ./test/integration/... ./cmd/... ./internal/...
+
+## fuzz: Fuzz every parser of untrusted input for FUZZTIME each (default 1m); the seed inputs run in every `make test`
+FUZZTIME ?= 1m
+fuzz:
+	go test -run '^$$' -fuzz '^FuzzDecodeCursor_' -fuzztime $(FUZZTIME) ./internal/usecase/
+	go test -run '^$$' -fuzz '^FuzzCompareStreamIDs_' -fuzztime $(FUZZTIME) ./internal/usecase/
+	go test -run '^$$' -fuzz '^FuzzResolveTarget_' -fuzztime $(FUZZTIME) ./internal/usecase/
+	go test -run '^$$' -fuzz '^FuzzCallerFromClientCert_' -fuzztime $(FUZZTIME) ./internal/adapter/inbound/http/
+	go test -run '^$$' -fuzz '^FuzzDataFields_' -fuzztime $(FUZZTIME) ./internal/adapter/inbound/http/
+	go test -run '^$$' -fuzz '^FuzzSplitDepartments_' -fuzztime $(FUZZTIME) ./internal/adapter/inbound/http/
+	go test -run '^$$' -fuzz '^FuzzLoad_' -fuzztime $(FUZZTIME) ./internal/adapter/outbound/routingfile/
+
+API_BASE          ?= http://localhost:8080
+SCENARIO_TENANT   ?= 00000000-0000-4000-8000-0000000000a1
+SCENARIO_USER     ?= 00000000-0000-4000-8000-0000000000b1
+SCENARIO_DEPT     ?= 00000000-0000-4000-8000-0000000000c1
+SCHEMATHESIS_VERSION := 4.33.2
+FUZZ_SEED         ?= 1
+
+## blackbox-up: Start the black-box stack (the compose Valkey and the gateway built from this checkout)
+blackbox-up:
+	@bash scripts/blackbox-stack.sh up
+
+## blackbox-down: Stop the black-box stack
+blackbox-down:
+	@bash scripts/blackbox-stack.sh down
+
+## blackbox: Start the stack, run hurl, fuzz-api and fuzz-internal-api against it, stop it
+blackbox:
+	@trap '$(MAKE) --no-print-directory blackbox-down' EXIT; \
+	$(MAKE) --no-print-directory blackbox-up && \
+	$(MAKE) --no-print-directory hurl && \
+	$(MAKE) --no-print-directory fuzz-api && \
+	$(MAKE) --no-print-directory fuzz-internal-api
+
+## hurl: Run the Hurl scenarios in test/hurl against a running local stack with CALLER_IDENTITY_CHECK=false (needs hurl: brew install hurl)
+hurl:
+	@command -v hurl >/dev/null || { echo "hurl is not installed: brew install hurl"; exit 1; }
+	hurl --test --jobs 1 --variable host=$(API_BASE) --variable tenant=$(SCENARIO_TENANT) \
+	    --variable user=$(SCENARIO_USER) --variable department=$(SCENARIO_DEPT) \
+	    --variable run=$$(date +%s) test/hurl/*.hurl
+
+## fuzz-api: Fuzz the ticket and stream routes of the spec with Schemathesis against a running local stack (needs uv)
+fuzz-api:
+	@command -v uvx >/dev/null || { echo "uv is not installed: brew install uv"; exit 1; }
+	@mkdir -p $(COVERAGE_DIR)/schemathesis
+	uvx --from schemathesis==$(SCHEMATHESIS_VERSION) schemathesis run docs/swagger/openapi.yaml \
+	    --url $(API_BASE) --include-path-regex '^/(api/v1/stream|healthz|readyz)' \
+	    -H 'x-tenant-id: $(SCENARIO_TENANT)' -H 'x-user-id: $(SCENARIO_USER)' -H 'x-tenant-roles: member' \
+	    --max-examples 50 --workers 1 --seed $(FUZZ_SEED) --generation-deterministic \
+	    --report junit --report-dir $(COVERAGE_DIR)/schemathesis
+
+## fuzz-internal-api: Fuzz the internal events route as the system caller against a running local stack with CALLER_IDENTITY_CHECK=false; it writes events (needs uv)
+fuzz-internal-api:
+	@command -v uvx >/dev/null || { echo "uv is not installed: brew install uv"; exit 1; }
+	@mkdir -p $(COVERAGE_DIR)/schemathesis
+	uvx --from schemathesis==$(SCHEMATHESIS_VERSION) schemathesis run docs/swagger/openapi.yaml \
+	    --url $(API_BASE) --include-path-regex '^/api/v1/internal/' \
+	    -H 'x-user-id: iam-system' -H 'x-tenant-roles: iam-system' \
+	    --max-examples 100 --workers 1 --seed $(FUZZ_SEED) --generation-deterministic \
+	    --report junit --report-dir $(COVERAGE_DIR)/schemathesis
 
 ## merge-coverage: Merge the unit and integration profiles into coverage.out
 merge-coverage:
@@ -208,6 +274,7 @@ check:
 	go vet ./cmd/... ./internal/...
 	@$(MAKE) metrics-lint
 	@$(MAKE) helm-lint
+	@$(MAKE) alerts-test
 	@$(MAKE) design-sync-check-test
 	@$(MAKE) cover-check
 	@echo "✓ all checks passed"
@@ -284,6 +351,21 @@ helm-policy-check:
 		|| { echo "helm-policy-check: only the stream route may disable its request timeout"; exit 1; }; \
 	[ "$$(render -s templates/httproute.yaml | grep -c '^kind: HTTPRoute')" = 2 ] \
 		|| { echo "helm-policy-check: the ticket and stream paths need separate routes so each carries its own policy"; exit 1; }
+
+## contract-breaking: Fail on a breaking change to docs/swagger/openapi.yaml against CONTRACT_BASE_REF (default origin/main)
+contract-breaking:
+	@OASDIFF=$(OASDIFF) bash scripts/contract-breaking.sh
+
+## alerts-test: Unit-test every alert rule the chart renders with promtool (a local promtool, else the Prometheus image)
+PROMTOOL_IMAGE ?= prom/prometheus:v3.7.3
+alerts-test:
+	@mkdir -p $(COVERAGE_DIR)/alerts
+	@$(HELM) template x deploy/helm $(HELM_LINT_VALUES) -s templates/prometheusrule.yaml \
+		| awk 'f{sub(/^  /,""); print} /^spec:/{f=1}' > $(COVERAGE_DIR)/alerts/rules.yml
+	@cp test/monitoring/alerts.test.yml $(COVERAGE_DIR)/alerts/alerts.test.yml
+	@if command -v promtool >/dev/null 2>&1; then cd $(COVERAGE_DIR)/alerts && promtool test rules alerts.test.yml; \
+	else docker run --rm --entrypoint promtool -v "$(CURDIR)/$(COVERAGE_DIR)/alerts:/rules:ro" -w /rules \
+		$(PROMTOOL_IMAGE) test rules alerts.test.yml; fi
 
 ## helm-test: Decode the rendered policy and names and check them against the router (needs helm)
 helm-test:

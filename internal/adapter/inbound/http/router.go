@@ -58,12 +58,18 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 
 	r.GET("/api/v1/stream", cfg.StreamHandler.Stream)
 	r.NoRoute(notFound)
+	r.HandleMethodNotAllowed = true
+	r.NoMethod(methodNotAllowed)
 
 	return r
 }
 
+func methodNotAllowed(c *gin.Context) {
+	writeProblem(c, http.StatusMethodNotAllowed, "method-not-allowed", c.Request.Method+" is not allowed on "+c.Request.URL.EscapedPath())
+}
+
 func notFound(c *gin.Context) {
-	writeProblem(c, http.StatusNotFound, "not-found", "no route matches "+c.Request.Method+" "+c.Request.URL.Path)
+	writeProblem(c, http.StatusNotFound, "not-found", "no route matches "+c.Request.Method+" "+c.Request.URL.EscapedPath())
 }
 
 func refuseEncodedSlash(c *gin.Context) {

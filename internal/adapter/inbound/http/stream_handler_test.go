@@ -111,7 +111,15 @@ func (s *stopAfterOneStreamStore) RangeSince(_ context.Context, target usecase.S
 	return tagged, nil
 }
 
-func (s *stopAfterOneStreamStore) ReadNew(_ context.Context, targets []usecase.StreamTarget, _ time.Duration) ([]domain.Frame, error) {
+func (s *stopAfterOneStreamStore) LatestEntryID(_ context.Context, _ usecase.StreamTarget) (string, error) {
+	return "0-0", nil
+}
+
+func (s *stopAfterOneStreamStore) ReadNew(_ context.Context, positions []usecase.StreamPosition, _ time.Duration) ([]domain.Frame, error) {
+	targets := make([]usecase.StreamTarget, len(positions))
+	for i, p := range positions {
+		targets[i] = p.Target
+	}
 	s.readNewCalls = append(s.readNewCalls, targets)
 	if s.readNewIdx >= len(s.readNewSeq) {
 		return nil, errHandlerTestStop
@@ -140,7 +148,7 @@ func newStreamTestRouter(ticketStore *fakeTicketStore, streamStore usecase.Strea
 	tickets := usecase.NewTicketService(ticketStore, time.Minute, 10, time.Minute)
 	stream := usecase.NewStreamService(tickets, streamStore, limiter, 5, time.Minute, time.Millisecond)
 	r := gin.New()
-	r.GET("/api/v1/stream", NewStreamHandler(stream).Stream)
+	r.GET("/api/v1/stream", NewStreamHandler(stream, context.Background()).Stream)
 	return r
 }
 

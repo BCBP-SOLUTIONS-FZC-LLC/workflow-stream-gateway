@@ -23,13 +23,14 @@ jobs:
     name: quality
     if: ${{ !inputs.skip }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           persist-credentials: false
           token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+          fetch-depth: 0 # the contract breaking-change gate reads main's spec
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -84,6 +85,15 @@ jobs:
 
       - name: Helm chart lint + kubeconform
         run: make helm-lint
+
+      - name: Alert rule unit tests (promtool)
+        run: make alerts-test
+
+      # The event consumer and browsers call this spec's routes.
+      - name: Contract breaking-change gate
+        env:
+          CONTRACT_BASE_REF: origin/main
+        run: make contract-breaking
 
       - name: Lint GitHub Actions workflows
         run: make lint-workflows

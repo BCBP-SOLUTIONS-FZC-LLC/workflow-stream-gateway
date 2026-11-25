@@ -59,6 +59,8 @@ env:
   VALKEY_DIAL_TIMEOUT: "2s"
   VALKEY_READ_TIMEOUT: "1s"
   VALKEY_WRITE_TIMEOUT: "1s"
+  VALKEY_POOL_SIZE: "20" # tickets, ingest, counters, readiness
+  VALKEY_STREAM_POOL_SIZE: "1000" # open streams per pod, one connection each while it waits for events
   TICKET_TTL: "60s"
   TICKET_MINT_RATE_MAX: "10" # provisional — LLD §9.3/Appendix B, not validated against real usage
   TICKET_MINT_RATE_WINDOW: "60s"
@@ -77,14 +79,9 @@ rotationEpoch: "0"
 secretValues:
   VALKEY_PASSWORD: ""
 
-# terminationGracePeriodSeconds covers cmd/server's own 10s shutdownTimeout
-# with headroom, but does NOT solve graceful SSE drain on its own: Go's
-# http.Server.Shutdown waits for in-flight handlers to return on their own
-# rather than cancelling their request context, so an open SSE connection
-# can outlive the shutdown signal until the process actually exits (a plain
-# TCP disconnect the client's own reconnect logic already handles, LLD §8).
-# Real graceful-drain behavior on rolling deploy is an explicit LLD
-# Appendix B open item, not solved here.
+# On shutdown the server ends every open stream at its next wake-up and waits
+# one heartbeat interval plus 5s (at least 10s) for them, LLD §10.2. Keep this
+# above that wait: with the 15s heartbeat the wait is 20s.
 terminationGracePeriodSeconds: 30
 
 podDisruptionBudget:

@@ -114,7 +114,7 @@ func TestFanoutService_Ingest_TaskEventFansOutToAllAssignees(t *testing.T) {
 
 	_, err := svc.Ingest(context.Background(), IngestInput{
 		Source: workflowSource, EventType: eventTaskCreated,
-		TenantID:    "tenant-a",
+		TenantID:    "00000000-0000-4000-8000-0000000000a1",
 		Payload:     recipients(users("00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000a2", "00000000-0000-4000-8000-0000000000a3"), dept("00000000-0000-4000-8000-0000000000d0")),
 		RawEnvelope: []byte(`{"type":"WorkflowTaskCreated"}`),
 	})
@@ -122,7 +122,7 @@ func TestFanoutService_Ingest_TaskEventFansOutToAllAssignees(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, store.appended, 3)
 	for i, userID := range []string{"00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000a2", "00000000-0000-4000-8000-0000000000a3"} {
-		assert.Equal(t, "tenant-a", store.appended[i].tenantID)
+		assert.Equal(t, "00000000-0000-4000-8000-0000000000a1", store.appended[i].tenantID)
 		assert.Equal(t, userID, store.appended[i].userID)
 		assert.Equal(t, "workflow."+eventTaskCreated, store.appended[i].eventType)
 	}
@@ -134,13 +134,13 @@ func TestFanoutService_Ingest_TaskEventAlwaysBroadcastsTenantWide(t *testing.T) 
 
 	_, err := svc.Ingest(context.Background(), IngestInput{
 		Source: workflowSource, EventType: eventTaskCreated,
-		TenantID: "tenant-a",
+		TenantID: "00000000-0000-4000-8000-0000000000a1",
 		Payload:  recipients(users("00000000-0000-4000-8000-0000000000a1"), dept("00000000-0000-4000-8000-0000000000d0")),
 	})
 
 	require.NoError(t, err)
 	require.Len(t, store.broadcast, 1)
-	assert.Equal(t, "tenant-a", store.broadcast[0].tenantID)
+	assert.Equal(t, "00000000-0000-4000-8000-0000000000a1", store.broadcast[0].tenantID)
 	assert.Equal(t, "workflow."+eventTaskCreated, store.broadcast[0].eventType)
 }
 
@@ -150,13 +150,13 @@ func TestFanoutService_Ingest_TaskEventWithDepartmentIDBroadcastsToDepartment(t 
 
 	_, err := svc.Ingest(context.Background(), IngestInput{
 		Source: workflowSource, EventType: eventTaskCreated,
-		TenantID: "tenant-a",
+		TenantID: "00000000-0000-4000-8000-0000000000a1",
 		Payload:  recipients(users("00000000-0000-4000-8000-0000000000a1"), dept("00000000-0000-4000-8000-0000000000d0")),
 	})
 
 	require.NoError(t, err)
 	require.Len(t, store.department, 1)
-	assert.Equal(t, "tenant-a", store.department[0].tenantID)
+	assert.Equal(t, "00000000-0000-4000-8000-0000000000a1", store.department[0].tenantID)
 	assert.Equal(t, "00000000-0000-4000-8000-0000000000d0", store.department[0].departmentID)
 	assert.Equal(t, "workflow."+eventTaskCreated, store.department[0].eventType)
 }
@@ -167,7 +167,7 @@ func TestFanoutService_Ingest_TaskEventWithoutDepartmentIDSkipsDepartmentWrite(t
 
 	_, err := svc.Ingest(context.Background(), IngestInput{
 		Source: workflowSource, EventType: eventTaskCreated,
-		TenantID: "tenant-a",
+		TenantID: "00000000-0000-4000-8000-0000000000a1",
 		Payload:  recipients(users("00000000-0000-4000-8000-0000000000a1")),
 	})
 
@@ -181,7 +181,7 @@ func TestFanoutService_Ingest_ReassignedFansOutToExactlyOldAndNewAndDepartment(t
 
 	_, err := svc.Ingest(context.Background(), IngestInput{
 		Source: workflowSource, EventType: eventTaskReassigned,
-		TenantID:    "tenant-a",
+		TenantID:    "00000000-0000-4000-8000-0000000000a1",
 		Payload:     recipients(users("00000000-0000-4000-8000-0000000000b1", "00000000-0000-4000-8000-0000000000b2"), dept("00000000-0000-4000-8000-0000000000d0")),
 		RawEnvelope: []byte(`{}`),
 	})
@@ -201,7 +201,7 @@ func TestFanoutService_Ingest_InstanceEventRoutesToStartedByAndBroadcastsButNeve
 
 	_, err := svc.Ingest(context.Background(), IngestInput{
 		Source: workflowSource, EventType: eventInstanceFinished,
-		TenantID:    "tenant-a",
+		TenantID:    "00000000-0000-4000-8000-0000000000a1",
 		Payload:     recipients(users("00000000-0000-4000-8000-0000000000c1")),
 		RawEnvelope: []byte(`{}`),
 	})
@@ -221,7 +221,7 @@ func TestFanoutService_Ingest_AnEmptyRecipientListStillReachesTheTenantTier(t *t
 
 	_, err := svc.Ingest(context.Background(), IngestInput{
 		Source: workflowSource, EventType: eventInstanceFinished,
-		TenantID:    "tenant-a",
+		TenantID:    "00000000-0000-4000-8000-0000000000a1",
 		Payload:     []byte(`{"recipients":[]}`),
 		RawEnvelope: []byte(`{}`),
 	})
@@ -262,7 +262,7 @@ func TestFanoutService_Ingest_AbortsOnFirstPersonalWriteFailure(t *testing.T) {
 
 	_, err := svc.Ingest(context.Background(), IngestInput{
 		Source: workflowSource, EventType: eventTaskCreated,
-		TenantID: "tenant-a",
+		TenantID: "00000000-0000-4000-8000-0000000000a1",
 		Payload:  recipients(users("00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000a2", "00000000-0000-4000-8000-0000000000a3")),
 	})
 
@@ -285,7 +285,7 @@ func TestFanoutService_Ingest_AbortsOnBroadcastWriteFailure(t *testing.T) {
 
 	_, err := svc.Ingest(context.Background(), IngestInput{
 		Source: workflowSource, EventType: eventTaskCreated,
-		TenantID: "tenant-a",
+		TenantID: "00000000-0000-4000-8000-0000000000a1",
 		Payload:  recipients(users("00000000-0000-4000-8000-0000000000a1"), dept("00000000-0000-4000-8000-0000000000d0")),
 	})
 
@@ -303,7 +303,7 @@ func TestFanoutService_Ingest_AbortsOnDepartmentWriteFailure(t *testing.T) {
 
 	_, err := svc.Ingest(context.Background(), IngestInput{
 		Source: workflowSource, EventType: eventTaskCreated,
-		TenantID: "tenant-a",
+		TenantID: "00000000-0000-4000-8000-0000000000a1",
 		Payload:  recipients(users("00000000-0000-4000-8000-0000000000a1"), dept("00000000-0000-4000-8000-0000000000d0")),
 	})
 
@@ -344,7 +344,7 @@ func TestFanoutService_Ingest_EveryRenderedEventReachesItsRecipients(t *testing.
 			store := &fakeEventStore{}
 
 			_, err := NewFanoutService(store, workflowTable(t), CallerCheckOff).Ingest(context.Background(), IngestInput{
-				Source: workflowSource, EventType: tc.eventType, TenantID: "tenant-a", Payload: tc.payload, RawEnvelope: []byte(`{}`),
+				Source: workflowSource, EventType: tc.eventType, TenantID: "00000000-0000-4000-8000-0000000000a1", Payload: tc.payload, RawEnvelope: []byte(`{}`),
 			})
 
 			require.NoError(t, err)
@@ -370,7 +370,7 @@ func TestFanoutService_Ingest_EveryLLMEventReachesOnlyItsRecipients(t *testing.T
 			store := &fakeEventStore{}
 
 			name, err := NewFanoutService(store, workflowTable(t), CallerCheckOff).Ingest(context.Background(), IngestInput{
-				Source: llmSource, EventType: eventType, TenantID: "tenant-a",
+				Source: llmSource, EventType: eventType, TenantID: "00000000-0000-4000-8000-0000000000a1",
 				Payload: recipients(users("00000000-0000-4000-8000-0000000000a1"), dept("00000000-0000-4000-8000-0000000000d0")), RawEnvelope: []byte(`{}`),
 			})
 
@@ -388,7 +388,7 @@ func TestFanoutService_Ingest_EveryLLMEventReachesOnlyItsRecipients(t *testing.T
 func TestFanoutService_Ingest_UnrenderedExecutionEventsAreUnknown(t *testing.T) {
 	for _, eventType := range []string{"WorkflowInstanceStarted", "WorkflowInstanceForceRouted"} {
 		_, err := NewFanoutService(&fakeEventStore{}, workflowTable(t), CallerCheckOff).Ingest(context.Background(), IngestInput{
-			Source: workflowSource, EventType: eventType, TenantID: "tenant-a", Payload: []byte(`{}`), RawEnvelope: []byte(`{}`),
+			Source: workflowSource, EventType: eventType, TenantID: "00000000-0000-4000-8000-0000000000a1", Payload: []byte(`{}`), RawEnvelope: []byte(`{}`),
 		})
 		assert.ErrorIs(t, err, ErrUnknownEventType, eventType)
 	}

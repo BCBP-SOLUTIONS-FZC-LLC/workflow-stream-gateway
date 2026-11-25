@@ -36,11 +36,17 @@ func (h *TicketHandler) Mint(c *gin.Context) {
 		return
 	}
 
+	departments := splitDepartments(c.GetHeader(headerDepartments))
+	if !canonicalIdentity(rc.TenantID, rc.UserID, departments) {
+		writeProblem(c, http.StatusUnauthorized, "unauthorized", "invalid gateway identity headers")
+		return
+	}
+
 	snapshot := domain.Ticket{
 		TenantID:     rc.TenantID,
 		UserID:       rc.UserID,
 		TenantRoles:  rc.Roles,
-		Departments:  splitDepartments(c.GetHeader(headerDepartments)),
+		Departments:  departments,
 		Plan:         c.GetHeader(headerPlan),
 		FeatureFlags: splitHeaderList(c.GetHeader(headerFeatureFlags)),
 		IssuedAt:     time.Now().UTC(),
@@ -83,6 +89,18 @@ func splitHeaderList(raw string) []string {
 		}
 	}
 	return out
+}
+
+func canonicalIdentity(tenantID, userID string, departments []domain.DepartmentRole) bool {
+	if !domain.IsCanonicalID(tenantID) || !domain.IsCanonicalID(userID) {
+		return false
+	}
+	for _, d := range departments {
+		if !domain.IsCanonicalID(d.DepartmentID) {
+			return false
+		}
+	}
+	return true
 }
 
 func splitDepartments(raw string) []domain.DepartmentRole {

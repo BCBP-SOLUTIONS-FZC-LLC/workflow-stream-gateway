@@ -8,8 +8,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+### Fixed
+
+- Live delivery no longer skips events: each read starts after the entry last delivered on each stream (beginning from the newest entry at connect, the resume cursor or the last backfilled entry), instead of waiting only for entries newer than the read itself, so an event written while a frame was being sent is delivered.
+- The ticket-mint rate counter and the connection counter set their expiry in the same atomic step as the increment. A failed second command used to leave a counter without an expiry, refusing the user for good; the connection cap is now checked before the increment, so a refused connect leaves the count unchanged.
+- A replica told to stop ends its open streams at their next wake-up and waits one heartbeat interval plus five seconds (at least ten), and always shuts down both listeners. Shutdown with a connected browser used to run into the timeout and exit with an error.
+- The resume cursor names every tailed stream that holds an entry from the first frame, so a reconnect after a resync no longer resyncs again; and a payload with line breaks is written as one `data:` line per payload line, so it can no longer start another SSE field or end the event early.
+- Open streams use a Valkey connection pool of their own (`VALKEY_STREAM_POOL_SIZE`, default 1000; the other pool is `VALKEY_POOL_SIZE`, default 20). Each open stream holds a connection while it waits, and a few dozen open streams used to take every connection, so ingest answered 502 and ticket minting 503.
+- Ingest refuses with 400 an envelope whose `tenant_id` is not a lower-case UUID, since the tenant forms every stream key.
+- A resume cursor id that is not a stream id is dropped, and one beyond the newest entry is taken as the newest entry; a malformed id used to end the stream and a future one left it silent.
+- The ticket TTL, mint window, retention window and heartbeat interval must be at least 1 ms; below that Valkey reads them as 0, which disables the expiry or makes a read wait forever.
+- A stream flushes its `200` and headers before it first waits for events, so a browser's `EventSource` opens at once instead of at the first heartbeat (up to 15 s later).
+- A method a known path does not serve is answered `405` with an `Allow` header instead of `404`. The OpenAPI documents the shared middleware's flat `application/json` body on the mint route's `401`.
+- A problem response names the path as it was sent: a refused `/api/v1/internal%2Fevents` used to read "no route matches POST /api/v1/internal/events", a path that does have a route.
+- A ticket is minted only when the tenant, user and every department id are lower-case UUIDs; any other value is refused with 401, since these ids form the Valkey keys and a key separator in one could name another tenant's key.
+
 ### Changed
 
+- `make test` and `make test-integration` run and count `cmd/`, which no target ran before, and the integration run also includes integration-tagged tests under `internal/`; start-up, shutdown and exit codes of the server are tested.
+- CI, inside the existing jobs: the test job runs `make blackbox` (Hurl and Schemathesis against a stack it starts); the quality job runs `make alerts-test` (promtool unit tests for every alert rule the chart renders, also in `make check`) and `make contract-breaking` (oasdiff against `main`). `make test` now runs the alert runbook test in `test/monitoring`, which no target ran before.
+- `make fuzz` fuzzes every parser of untrusted input (resume cursor, stream id order, caller identity header, department header, SSE data lines, ingest payload, routing file); `make hurl` runs HTTP scenarios and `make fuzz-api` / `make fuzz-internal-api` run Schemathesis against a running stack.
+- The coverage gate is 97% overall and per package (from 90%), with lower floors only for `internal/observability` (90) and `cmd/server` (85), whose remaining lines exit the process or fail only when a platform library refuses its own identity.
+- Tests: request-body limit, readiness, unmatched routes, ticket edge cases, stream failures, metric pre-initialisation and Valkey adapter boundaries. The Valkey integration test that slept before appending now waits until the reader is blocked.
 - The OpenAPI envelope `type` no longer lists the old twelve dotted-lowercase types: a type is PascalCase and matched with `source` against the routing file, and a type its section does not list is accepted and ignored with 200.
 - CI: the PR summary reports a failed or cancelled gate as failed instead of "All checks passed", and counts a run as skipped only when the gate says so.
 - Every routed payload names its readers in `recipients`, a list of `{kind, id}` (`kind` `user` or `department`); a `user` entry reaches that user, a `department` entry that department's tier, and a repeated entry is written once. The routing file names no payload fields: each section lists its `source`, `tenant_admins` (whether its events also reach the tenant's administrators) and its event types.

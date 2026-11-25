@@ -183,5 +183,7 @@ func validConfig() *Config {
 		StreamKeyTTL:          15 * time.Minute,
 		ConnectionCapPerUser:  5,
 		HeartbeatInterval:     15 * time.Second,
+		ValkeyPoolSize:        20,
+		ValkeyStreamPoolSize:  1000,
 	}
 }

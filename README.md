@@ -81,6 +81,8 @@ make dev       # reads .env
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | A collector address; `none` or unset disables export |
 | `VALKEY_ADDR` / `VALKEY_PASSWORD` | `localhost:6379` / empty | |
 | `VALKEY_DIAL_TIMEOUT` / `_READ_TIMEOUT` / `_WRITE_TIMEOUT` | `2s` / `1s` / `1s` | |
+| `VALKEY_POOL_SIZE` | `20` | Connections for tickets, ingest, counters and readiness |
+| `VALKEY_STREAM_POOL_SIZE` | `1000` | Connections for open streams, one each while it waits for events; kept apart so open streams never starve ingest or ticket minting |
 | `TICKET_TTL` | `60s` | |
 | `TICKET_MINT_RATE_MAX` / `TICKET_MINT_RATE_WINDOW` | `10` / `60s` | Per-user mint rate |
 | `STREAM_RETENTION_WINDOW` / `STREAM_KEY_TTL` | `10m` / `15m` | The key lifetime must exceed the retention window |
@@ -144,7 +146,7 @@ Every series carries `domain` (`workflow`), `service` (`workflow-stream-gateway`
 
 - The ticket is the only source of connection identity on the stream route; a client-supplied identity is never read.
 - The internal endpoint admits only the system caller identity (`x-tenant-roles` holds `iam-system`, `x-user-id` is set) and caps request bodies at 10 MiB. The headers are not a credential: mesh mutual TLS names the caller, and an Istio `AuthorizationPolicy` admits only the event consumer on `/api/v1/internal/events`. With the policy off, the header check is the only gate besides the NetworkPolicy. The router matches the raw path and answers `404` for an encoded slash, so `/api/v1/internal%2Fevents` reaches no handler. A refused caller is counted in `workflow_stream_gateway_internal_auth_rejected_total{reason}`.
-- Per-user connection and mint-rate caps live in Valkey; the connection counter cannot go negative.
+- Per-user connection and mint-rate caps live in Valkey; the connection counter cannot go negative, both counters always carry an expiry, and a refused connect leaves the count unchanged.
 - Container: distroless, non-root, read-only root filesystem, all capabilities dropped.
 
 ---
@@ -160,6 +162,12 @@ Every series carries `domain` (`workflow`), `service` (`workflow-stream-gateway`
 | `make design-sync-check` | Compare the LLD and both specs with their design copies (`DESIGN_DIR=<design checkout>`) |
 | `make lint-workflows` / `make vuln` / `make docker-check` | Workflow lint, dependency vulnerabilities, Dockerfile lint and scan |
 | `make smoke-test` | Build the image and check it end to end against a real Valkey (needs `GO_PRIVATE_TOKEN`) |
+| `make fuzz` | Fuzz every parser of untrusted input for `FUZZTIME` each (default `1m`); the seed inputs run in `make test` |
+| `make hurl` | Run the Hurl scenarios in `test/hurl` against a running stack started with `CALLER_IDENTITY_CHECK=false` (`API_BASE`, default `http://localhost:8080`) |
+| `make blackbox` | Start Valkey and the gateway, run `hurl`, `fuzz-api` and `fuzz-internal-api` against them, then stop them; CI runs it in the test job |
+| `make alerts-test` | Unit-test every alert rule the chart renders with promtool; runs in `make check` and the quality job |
+| `make contract-breaking` | Fail on a breaking change to `docs/swagger/openapi.yaml` against `CONTRACT_BASE_REF` (default `origin/main`); runs in the quality job |
+| `make fuzz-api` / `make fuzz-internal-api` | Fuzz the ticket and stream routes, and the internal events route as the system caller, with Schemathesis against a running stack; settings in `schemathesis.toml` |
 
 ## CI
 

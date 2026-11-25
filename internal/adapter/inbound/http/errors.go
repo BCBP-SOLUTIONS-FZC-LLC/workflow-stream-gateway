@@ -24,7 +24,7 @@ func writeProblem(c *gin.Context, status int, code, detail string) {
 		Title:     http.StatusText(status),
 		Status:    status,
 		Detail:    detail,
-		Instance:  c.Request.URL.Path,
+		Instance:  c.Request.URL.EscapedPath(),
 		Code:      code,
 		TraceID:   c.Writer.Header().Get("X-Trace-ID"),
 		RequestID: c.Writer.Header().Get("X-Request-ID"),
