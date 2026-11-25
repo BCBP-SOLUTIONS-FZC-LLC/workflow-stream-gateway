@@ -154,11 +154,11 @@ components:
         type:
           type: string
           description: >
-            Dotted-lowercase wire type. One of the 12 types this service's
-            wf-workflow-dash-q subscription is filtered to: WorkflowTaskCreated,
-            .completed, .deferred, .reassigned, .sla-warning, .sla-breached,
-            WorkflowInstanceStarted, .paused, .resumed, .cancelled, .terminated,
-            .finished. Any other value is accepted and ignored with 200.
+            PascalCase wire type, matched together with `source` against the
+            routing file: each service section lists the types it routes (for
+            example the workflow types from `workflow-execution-svc` and the
+            generation types from `llm-retrieval-generation`). A type the
+            section for this source does not list is accepted and ignored with 200.
           example: "WorkflowTaskCompleted"
         source:
           type: string
