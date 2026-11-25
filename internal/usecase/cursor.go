@@ -1,6 +1,9 @@
 package usecase
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 const (
 	cursorPairSep = "|"
@@ -30,6 +33,22 @@ func encodeCursor(cursors map[string]string) string {
 	return strings.Join(pairs, cursorPairSep)
 }
 
+func isStreamID(id string) bool {
+	ms, seq, hasSeq := strings.Cut(id, "-")
+	if !isUint64(ms) {
+		return false
+	}
+	return !hasSeq || isUint64(seq)
+}
+
+func isUint64(s string) bool {
+	if s == "" || strings.TrimLeft(s, "0123456789") != "" {
+		return false
+	}
+	_, err := strconv.ParseUint(s, 10, 64)
+	return err == nil
+}
+
 func decodeCursor(raw string) map[string]string {
 	if raw == "" {
 		return nil
@@ -38,7 +57,7 @@ func decodeCursor(raw string) map[string]string {
 	cursors := make(map[string]string, len(pairs))
 	for _, p := range pairs {
 		key, id, ok := strings.Cut(p, cursorKVSep)
-		if !ok || key == "" || id == "" {
+		if !ok || key == "" || !isStreamID(id) {
 			continue
 		}
 		cursors[key] = id

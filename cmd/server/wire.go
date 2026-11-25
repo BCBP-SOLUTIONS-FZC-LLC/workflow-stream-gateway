@@ -15,7 +15,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/workflow-stream-gateway/internal/usecase"
 )
 
-func newRouter(stopping context.Context, cfg *config.Config, ginCfg gincommon.Config, client *redis.Client, routes *domain.RoutingTable) *gin.Engine {
+func newRouter(stopping context.Context, cfg *config.Config, ginCfg gincommon.Config, client, streamClient *redis.Client, routes *domain.RoutingTable) *gin.Engine {
 	ticketStore := sgValkey.NewTicketStore(client)
 	ticketService := usecase.NewTicketService(ticketStore, cfg.TicketTTL, cfg.TicketMintRateMax, cfg.TicketMintRateWindow)
 	ticketHandler := sgHTTP.NewTicketHandler(ticketService)
@@ -24,7 +24,7 @@ func newRouter(stopping context.Context, cfg *config.Config, ginCfg gincommon.Co
 	fanoutService := usecase.NewFanoutService(eventStore, routes, usecase.CallerCheck(cfg.CallerIdentityCheck))
 	eventsHandler := sgHTTP.NewEventsHandler(fanoutService)
 
-	streamStore := sgValkey.NewStreamStore(client)
+	streamStore := sgValkey.NewStreamStore(streamClient)
 	connLimiter := sgValkey.NewConnectionLimiter(client)
 	connCountTTL := cfg.TicketTTL + cfg.HeartbeatInterval
 	streamService := usecase.NewStreamService(

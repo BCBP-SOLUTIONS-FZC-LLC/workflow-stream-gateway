@@ -30,7 +30,7 @@ func TestFanoutService_Ingest_TheSameTypeUnderTwoServicesRoutesBySource(t *testi
 
 	store := &fakeEventStore{}
 	name, err := NewFanoutService(store, twoServiceTable(t), CallerCheckOff).Ingest(context.Background(),
-		IngestInput{Source: llmSource, EventType: "Shared", TenantID: "t", Payload: payload})
+		IngestInput{Source: llmSource, EventType: "Shared", TenantID: "00000000-0000-4000-8000-0000000000a1", Payload: payload})
 
 	require.NoError(t, err)
 	assert.Equal(t, "llm.Shared", name)
@@ -41,7 +41,7 @@ func TestFanoutService_Ingest_TheSameTypeUnderTwoServicesRoutesBySource(t *testi
 
 	store = &fakeEventStore{}
 	name, err = NewFanoutService(store, twoServiceTable(t), CallerCheckOff).Ingest(context.Background(),
-		IngestInput{Source: workflowSource, EventType: "Shared", TenantID: "t", Payload: payload})
+		IngestInput{Source: workflowSource, EventType: "Shared", TenantID: "00000000-0000-4000-8000-0000000000a1", Payload: payload})
 
 	require.NoError(t, err)
 	assert.Equal(t, "workflow.Shared", name)
@@ -53,7 +53,7 @@ func TestFanoutService_Ingest_ATypeUnderAnotherSourceIsUnknown(t *testing.T) {
 	store := &fakeEventStore{}
 
 	name, err := NewFanoutService(store, workflowTable(t), CallerCheckOff).Ingest(context.Background(),
-		IngestInput{Source: "tender-svc", EventType: eventTaskCreated, TenantID: "t", Payload: []byte(`{}`)})
+		IngestInput{Source: "tender-svc", EventType: eventTaskCreated, TenantID: "00000000-0000-4000-8000-0000000000a1", Payload: []byte(`{}`)})
 
 	assert.ErrorIs(t, err, ErrUnknownEventType)
 	assert.Empty(t, name)
@@ -89,7 +89,7 @@ func TestFanoutService_Ingest_ReadsTheRecipientList(t *testing.T) {
 			store := &fakeEventStore{}
 
 			_, err := NewFanoutService(store, workflowTable(t), CallerCheckOff).Ingest(context.Background(),
-				IngestInput{Source: workflowSource, EventType: eventTaskCreated, TenantID: "t", Payload: []byte(tc.payload)})
+				IngestInput{Source: workflowSource, EventType: eventTaskCreated, TenantID: "00000000-0000-4000-8000-0000000000a1", Payload: []byte(tc.payload)})
 
 			require.NoError(t, err)
 			var gotUsers, gotDepts []string
@@ -132,7 +132,7 @@ func TestFanoutService_Ingest_RefusesAPayloadOfTheWrongShape(t *testing.T) {
 			store := &fakeEventStore{}
 
 			_, err := NewFanoutService(store, workflowTable(t), CallerCheckOff).Ingest(context.Background(),
-				IngestInput{Source: workflowSource, EventType: eventTaskCreated, TenantID: "t", Payload: []byte(payload)})
+				IngestInput{Source: workflowSource, EventType: eventTaskCreated, TenantID: "00000000-0000-4000-8000-0000000000a1", Payload: []byte(payload)})
 
 			assert.ErrorIs(t, err, ErrInvalidPayload)
 			assert.Empty(t, store.appended, "nothing is written for a payload that does not decode")
@@ -164,7 +164,7 @@ func TestFanoutService_Ingest_ACallerPublishesOnlyForItsOwnSection(t *testing.T)
 			store := &fakeEventStore{}
 
 			_, err := NewFanoutService(store, twoServiceTable(t), CallerCheckOn).Ingest(context.Background(), IngestInput{
-				Source: tc.source, EventType: "Shared", TenantID: "t", Caller: tc.caller,
+				Source: tc.source, EventType: "Shared", TenantID: "00000000-0000-4000-8000-0000000000a1", Caller: tc.caller,
 				Payload: recipients(users(uuidA)),
 			})
 
@@ -183,7 +183,7 @@ func TestFanoutService_Ingest_ACallerPublishesOnlyForItsOwnSection(t *testing.T)
 
 func TestFanoutService_Ingest_AnUnlistedPairIsUnknownWhoeverTheCaller(t *testing.T) {
 	_, err := NewFanoutService(&fakeEventStore{}, twoServiceTable(t), CallerCheckOn).Ingest(context.Background(),
-		IngestInput{Source: "tender-svc", EventType: "Shared", TenantID: "t", Caller: "other/sa", Payload: []byte(`{}`)})
+		IngestInput{Source: "tender-svc", EventType: "Shared", TenantID: "00000000-0000-4000-8000-0000000000a1", Caller: "other/sa", Payload: []byte(`{}`)})
 
 	assert.ErrorIs(t, err, ErrUnknownEventType)
 }
@@ -192,7 +192,7 @@ func TestFanoutService_Ingest_WithTheCallerCheckOffAnyCallerIsAdmitted(t *testin
 	store := &fakeEventStore{}
 
 	_, err := NewFanoutService(store, twoServiceTable(t), CallerCheckOff).Ingest(context.Background(),
-		IngestInput{Source: workflowSource, EventType: "Shared", TenantID: "t", Payload: recipients(users(uuidA))})
+		IngestInput{Source: workflowSource, EventType: "Shared", TenantID: "00000000-0000-4000-8000-0000000000a1", Payload: recipients(users(uuidA))})
 
 	require.NoError(t, err)
 	assert.Len(t, store.appended, 1)

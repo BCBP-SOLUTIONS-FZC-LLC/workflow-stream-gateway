@@ -95,7 +95,7 @@ const validTaskCreatedEnvelope = `{
 	"id": "018f2c3e-6b1a-7c40-9e2f-000000000001",
 	"type": "WorkflowTaskCreated",
 	"source": "workflow-execution-svc",
-	"tenant_id": "tenant-a",
+	"tenant_id": "00000000-0000-4000-8000-0000000000a1",
 	"time": "2026-08-21T10:00:00Z",
 	"data": {"recipients": [{"kind": "user", "id": "00000000-0000-4000-8000-0000000000a1"}, {"kind": "user", "id": "00000000-0000-4000-8000-0000000000a2"}]}
 }`
@@ -190,7 +190,7 @@ func TestEventsHandler_Ingest_ReassignedFansOutToTwo(t *testing.T) {
 
 	body := `{
 		"id": "1", "type": "WorkflowTaskReassigned", "source": "workflow-execution-svc",
-		"time": "2026-08-21T10:00:00Z", "tenant_id": "tenant-a",
+		"time": "2026-08-21T10:00:00Z", "tenant_id": "00000000-0000-4000-8000-0000000000a1",
 		"data": {"recipients": [{"kind": "user", "id": "00000000-0000-4000-8000-0000000000b1"}, {"kind": "user", "id": "00000000-0000-4000-8000-0000000000b2"}]}
 	}`
 	rec := postEvent(r, body)

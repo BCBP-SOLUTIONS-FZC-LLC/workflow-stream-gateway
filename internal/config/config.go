@@ -25,6 +25,9 @@ type Config struct {
 	ValkeyReadTimeout  time.Duration
 	ValkeyWriteTimeout time.Duration
 
+	ValkeyPoolSize       int
+	ValkeyStreamPoolSize int
+
 	TicketTTL            time.Duration
 	TicketMintRateMax    int
 	TicketMintRateWindow time.Duration
@@ -83,6 +86,9 @@ func Load() (*Config, error) {
 		ValkeyDialTimeout:  envDuration("VALKEY_DIAL_TIMEOUT", 2*time.Second),
 		ValkeyReadTimeout:  envDuration("VALKEY_READ_TIMEOUT", 1*time.Second),
 		ValkeyWriteTimeout: envDuration("VALKEY_WRITE_TIMEOUT", 1*time.Second),
+
+		ValkeyPoolSize:       envInt("VALKEY_POOL_SIZE", 20),
+		ValkeyStreamPoolSize: envInt("VALKEY_STREAM_POOL_SIZE", 1000),
 
 		TicketTTL:            envDuration("TICKET_TTL", 60*time.Second),
 		TicketMintRateMax:    envInt("TICKET_MINT_RATE_MAX", 10),
@@ -143,6 +149,25 @@ func (c *Config) validate() error {
 	}
 	if c.HeartbeatInterval <= 0 {
 		return fmt.Errorf("HEARTBEAT_INTERVAL must be > 0")
+	}
+	if c.ValkeyPoolSize <= 0 {
+		return fmt.Errorf("VALKEY_POOL_SIZE must be > 0")
+	}
+	if c.ValkeyStreamPoolSize <= 0 {
+		return fmt.Errorf("VALKEY_STREAM_POOL_SIZE must be > 0")
+	}
+	for _, d := range []struct {
+		key   string
+		value time.Duration
+	}{
+		{"TICKET_TTL", c.TicketTTL},
+		{"TICKET_MINT_RATE_WINDOW", c.TicketMintRateWindow},
+		{"STREAM_RETENTION_WINDOW", c.StreamRetentionWindow},
+		{"HEARTBEAT_INTERVAL", c.HeartbeatInterval},
+	} {
+		if d.value < time.Millisecond {
+			return fmt.Errorf("%s must be at least 1ms", d.key)
+		}
 	}
 	return nil
 }

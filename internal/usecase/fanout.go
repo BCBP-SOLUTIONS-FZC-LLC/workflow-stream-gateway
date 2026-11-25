@@ -99,6 +99,9 @@ func (s *FanoutService) Ingest(ctx context.Context, in IngestInput) (string, err
 	if s.callerCheck == CallerCheckOn && !route.Admits(in.Caller) {
 		return name, ErrCallerNotAllowed
 	}
+	if !domain.IsCanonicalID(in.TenantID) {
+		return name, fmt.Errorf("%w: tenant_id must be a lower-case UUID", ErrInvalidPayload)
+	}
 	t, err := resolveTarget(in.Payload)
 	if err != nil {
 		return name, err

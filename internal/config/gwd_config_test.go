@@ -14,6 +14,7 @@ var gwDEnvKeys = []string{
 	"APP_ENV", "BUILD_VERSION", "OTEL_SERVICE_NAME",
 	"HTTP_PORT", "METRICS_PORT", "ROUTING_CONFIG_PATH", "CALLER_IDENTITY_CHECK",
 	"VALKEY_ADDR", "VALKEY_PASSWORD", "VALKEY_DIAL_TIMEOUT", "VALKEY_READ_TIMEOUT", "VALKEY_WRITE_TIMEOUT",
+	"VALKEY_POOL_SIZE", "VALKEY_STREAM_POOL_SIZE",
 	"TICKET_TTL", "TICKET_MINT_RATE_MAX", "TICKET_MINT_RATE_WINDOW",
 	"STREAM_RETENTION_WINDOW", "STREAM_KEY_TTL", "CONNECTION_CAP_PER_USER", "HEARTBEAT_INTERVAL",
 }
@@ -39,6 +40,8 @@ func gwDDefaultConfig() Config {
 		ValkeyDialTimeout:     2 * time.Second,
 		ValkeyReadTimeout:     time.Second,
 		ValkeyWriteTimeout:    time.Second,
+		ValkeyPoolSize:        20,
+		ValkeyStreamPoolSize:  1000,
 		TicketTTL:             60 * time.Second,
 		TicketMintRateMax:     10,
 		TicketMintRateWindow:  60 * time.Second,
@@ -186,12 +189,13 @@ func TestGwD_Validate_DurationsMustBePositive(t *testing.T) {
 	values := []struct {
 		name  string
 		value time.Duration
-		valid bool
+		want  string
 	}{
-		{"zero", 0, false},
-		{"minus one second", -time.Second, false},
-		{"minus one nanosecond", -time.Nanosecond, false},
-		{"one nanosecond", time.Nanosecond, true},
+		{"zero", 0, " must be > 0"},
+		{"minus one second", -time.Second, " must be > 0"},
+		{"minus one nanosecond", -time.Nanosecond, " must be > 0"},
+		{"one nanosecond", time.Nanosecond, " must be at least 1ms"},
+		{"one millisecond", time.Millisecond, ""},
 	}
 	for _, s := range setters {
 		for _, v := range values {
@@ -201,11 +205,11 @@ func TestGwD_Validate_DurationsMustBePositive(t *testing.T) {
 
 				err := cfg.validate()
 
-				if v.valid {
+				if v.want == "" {
 					assert.NoError(t, err)
 					return
 				}
-				assert.EqualError(t, err, s.key+" must be > 0")
+				assert.EqualError(t, err, s.key+v.want)
 			})
 		}
 	}
@@ -289,7 +293,7 @@ func TestGwD_Validate_KeyTTLMustExceedTheRetentionWindow(t *testing.T) {
 		{"one nanosecond below", 10*time.Minute - time.Nanosecond, 10 * time.Minute, false},
 		{"far below", time.Minute, 10 * time.Minute, false},
 		{"one nanosecond above", 10*time.Minute + time.Nanosecond, 10 * time.Minute, true},
-		{"minimal pair", 2 * time.Nanosecond, time.Nanosecond, true},
+		{"minimal pair", time.Millisecond + time.Nanosecond, time.Millisecond, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -364,6 +368,8 @@ func TestGwD_Load_EachKeyEmptyWhileOthersAreSetTakesItsOwnDefault(t *testing.T) 
 		"VALKEY_DIAL_TIMEOUT":     func(c *Config, d Config) { c.ValkeyDialTimeout = d.ValkeyDialTimeout },
 		"VALKEY_READ_TIMEOUT":     func(c *Config, d Config) { c.ValkeyReadTimeout = d.ValkeyReadTimeout },
 		"VALKEY_WRITE_TIMEOUT":    func(c *Config, d Config) { c.ValkeyWriteTimeout = d.ValkeyWriteTimeout },
+		"VALKEY_POOL_SIZE":        func(c *Config, d Config) { c.ValkeyPoolSize = d.ValkeyPoolSize },
+		"VALKEY_STREAM_POOL_SIZE": func(c *Config, d Config) { c.ValkeyStreamPoolSize = d.ValkeyStreamPoolSize },
 		"TICKET_TTL":              func(c *Config, d Config) { c.TicketTTL = d.TicketTTL },
 		"TICKET_MINT_RATE_MAX":    func(c *Config, d Config) { c.TicketMintRateMax = d.TicketMintRateMax },
 		"TICKET_MINT_RATE_WINDOW": func(c *Config, d Config) { c.TicketMintRateWindow = d.TicketMintRateWindow },
@@ -442,6 +448,8 @@ func gwDNonDefaultEnv() map[string]string {
 		"VALKEY_DIAL_TIMEOUT":     "3s",
 		"VALKEY_READ_TIMEOUT":     "400ms",
 		"VALKEY_WRITE_TIMEOUT":    "700ms",
+		"VALKEY_POOL_SIZE":        "30",
+		"VALKEY_STREAM_POOL_SIZE": "600",
 		"TICKET_TTL":              "45s",
 		"TICKET_MINT_RATE_MAX":    "7",
 		"TICKET_MINT_RATE_WINDOW": "2m",
@@ -464,6 +472,8 @@ func gwDNonDefaultConfig() Config {
 		ValkeyDialTimeout:     3 * time.Second,
 		ValkeyReadTimeout:     400 * time.Millisecond,
 		ValkeyWriteTimeout:    700 * time.Millisecond,
+		ValkeyPoolSize:        30,
+		ValkeyStreamPoolSize:  600,
 		TicketTTL:             45 * time.Second,
 		TicketMintRateMax:     7,
 		TicketMintRateWindow:  2 * time.Minute,

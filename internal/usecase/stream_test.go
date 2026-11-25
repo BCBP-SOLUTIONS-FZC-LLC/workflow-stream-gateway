@@ -86,11 +86,22 @@ func (f *fakeStreamStore) RangeSince(_ context.Context, target StreamTarget, _ s
 	return tagSourceKey(key, f.rangeFrames), f.rangeErr
 }
 
-func (f *fakeStreamStore) LatestEntryID(_ context.Context, _ StreamTarget) (string, error) {
-	if f.latestID == "" {
-		return "0-0", f.latestErr
+func (f *fakeStreamStore) LatestEntryID(_ context.Context, target StreamTarget) (string, error) {
+	if f.latestID != "" {
+		return f.latestID, f.latestErr
 	}
-	return f.latestID, f.latestErr
+	frames, exists := f.rangeFrames, f.oldestExists
+	if st, ok := f.perTarget[f.KeyFor(target)]; ok {
+		frames, exists = st.rangeFrames, st.oldestExists
+	}
+	switch {
+	case len(frames) > 0:
+		return frames[len(frames)-1].ID, f.latestErr
+	case exists:
+		return "9999999999999-0", f.latestErr
+	default:
+		return NoEntryID, f.latestErr
+	}
 }
 
 func (f *fakeStreamStore) ReadNew(_ context.Context, positions []StreamPosition, _ time.Duration) ([]domain.Frame, error) {

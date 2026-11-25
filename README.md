@@ -81,6 +81,8 @@ make dev       # reads .env
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | A collector address; `none` or unset disables export |
 | `VALKEY_ADDR` / `VALKEY_PASSWORD` | `localhost:6379` / empty | |
 | `VALKEY_DIAL_TIMEOUT` / `_READ_TIMEOUT` / `_WRITE_TIMEOUT` | `2s` / `1s` / `1s` | |
+| `VALKEY_POOL_SIZE` | `20` | Connections for tickets, ingest, counters and readiness |
+| `VALKEY_STREAM_POOL_SIZE` | `1000` | Connections for open streams, one each while it waits for events; kept apart so open streams never starve ingest or ticket minting |
 | `TICKET_TTL` | `60s` | |
 | `TICKET_MINT_RATE_MAX` / `TICKET_MINT_RATE_WINDOW` | `10` / `60s` | Per-user mint rate |
 | `STREAM_RETENTION_WINDOW` / `STREAM_KEY_TTL` | `10m` / `15m` | The key lifetime must exceed the retention window |

@@ -375,8 +375,8 @@ paths:
             pair of source and type (accepted and ignored).
         "400":
           description: >
-            Malformed envelope (unparseable JSON, or missing id/type/source/time), or a
-            payload that is not a JSON object, a missing or null `recipients`, a `recipients`
+            Malformed envelope (unparseable JSON, or missing id/type/source/time), a
+            `tenant_id` that is not a lower-case UUID, or a payload that is not a JSON object, a missing or null `recipients`, a `recipients`
             that is not a list, or an entry that is not {kind: user or department, id: a
             lower-case UUID}.
             Non-retryable.

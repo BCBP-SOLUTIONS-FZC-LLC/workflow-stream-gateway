@@ -88,6 +88,9 @@ func (s *gwAStore) LatestEntryID(context.Context, usecase.StreamTarget) (string,
 	if s.latestErr != nil {
 		return "", s.latestErr
 	}
+	if s.oldestOK {
+		return "9999999999999-0", nil
+	}
 	return "0-0", nil
 }
 

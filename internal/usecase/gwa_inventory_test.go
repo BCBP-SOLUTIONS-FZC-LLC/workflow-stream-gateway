@@ -149,6 +149,12 @@ func (s *gwAStore) LatestEntryID(_ context.Context, t StreamTarget) (string, err
 	if id, ok := s.latest[key]; ok {
 		return id, nil
 	}
+	if r := s.ranges[key]; len(r.frames) > 0 {
+		return r.frames[len(r.frames)-1].ID, nil
+	}
+	if o := s.oldest[key]; o.exists {
+		return "9999999999999-0", nil
+	}
 	return NoEntryID, nil
 }
 
@@ -655,6 +661,7 @@ func TestGwAStreamService_Serve_ResyncVersusReplayOrdersIdsNumerically(t *testin
 			rig := newGwARig()
 			key := gwAKey(gwAPersonal)
 			rig.store.oldest[key] = gwAOldest{id: tc.oldestID, exists: true}
+			rig.store.latest[key] = "99999-0"
 			rig.store.ranges[key] = gwARange{frames: []domain.Frame{gwAFrameOf("99999-0", "gwa.Replayed")}}
 
 			err := rig.serve(context.Background(), gwATicket(), gwACursor(key, tc.cursorID))

@@ -26,7 +26,7 @@ func TestFanout_AnIngestedEventIsStoredUnderItsServicePrefixedName(t *testing.T)
 	name, err := fanout.Ingest(ctx, usecase.IngestInput{
 		Source:      "workflow-execution-svc",
 		EventType:   "WorkflowTaskCreated",
-		TenantID:    "t-routing",
+		TenantID:    "00000000-0000-4000-8000-0000000001f1",
 		Payload:     []byte(`{"recipients":[{"kind":"user","id":"00000000-0000-4000-8000-0000000001a1"},{"kind":"department","id":"00000000-0000-4000-8000-0000000001d1"}]}`),
 		RawEnvelope: []byte(`{"type":"WorkflowTaskCreated"}`),
 	})
@@ -34,9 +34,9 @@ func TestFanout_AnIngestedEventIsStoredUnderItsServicePrefixedName(t *testing.T)
 	assert.Equal(t, "workflow.WorkflowTaskCreated", name)
 
 	for _, target := range []usecase.StreamTarget{
-		{TenantID: "t-routing", UserID: "00000000-0000-4000-8000-0000000001a1"},
-		{TenantID: "t-routing"},
-		{TenantID: "t-routing", DepartmentID: "00000000-0000-4000-8000-0000000001d1"},
+		{TenantID: "00000000-0000-4000-8000-0000000001f1", UserID: "00000000-0000-4000-8000-0000000001a1"},
+		{TenantID: "00000000-0000-4000-8000-0000000001f1"},
+		{TenantID: "00000000-0000-4000-8000-0000000001f1", DepartmentID: "00000000-0000-4000-8000-0000000001d1"},
 	} {
 		frames, err := streams.RangeSince(ctx, target, "0-0")
 		require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestFanout_AnLLMEventReachesItsRecipientsAndNotTheTenantTier(t *testing.T) 
 	name, err := fanout.Ingest(ctx, usecase.IngestInput{
 		Source:      "llm-retrieval-generation",
 		EventType:   "GenerationProgressed",
-		TenantID:    "t-llm",
+		TenantID:    "00000000-0000-4000-8000-0000000002f1",
 		Payload:     []byte(`{"recipients":[{"kind":"user","id":"00000000-0000-4000-8000-0000000002a1"},{"kind":"department","id":"00000000-0000-4000-8000-0000000002d1"}]}`),
 		RawEnvelope: []byte(`{"type":"GenerationProgressed"}`),
 	})
@@ -64,15 +64,15 @@ func TestFanout_AnLLMEventReachesItsRecipientsAndNotTheTenantTier(t *testing.T) 
 	assert.Equal(t, "llm.GenerationProgressed", name)
 
 	for _, target := range []usecase.StreamTarget{
-		{TenantID: "t-llm", UserID: "00000000-0000-4000-8000-0000000002a1"},
-		{TenantID: "t-llm", DepartmentID: "00000000-0000-4000-8000-0000000002d1"},
+		{TenantID: "00000000-0000-4000-8000-0000000002f1", UserID: "00000000-0000-4000-8000-0000000002a1"},
+		{TenantID: "00000000-0000-4000-8000-0000000002f1", DepartmentID: "00000000-0000-4000-8000-0000000002d1"},
 	} {
 		frames, err := streams.RangeSince(ctx, target, "0-0")
 		require.NoError(t, err)
 		require.Len(t, frames, 1, "%+v", target)
 		assert.Equal(t, "llm.GenerationProgressed", frames[0].EventType, "%+v", target)
 	}
-	tenant, err := streams.RangeSince(ctx, usecase.StreamTarget{TenantID: "t-llm"}, "0-0")
+	tenant, err := streams.RangeSince(ctx, usecase.StreamTarget{TenantID: "00000000-0000-4000-8000-0000000002f1"}, "0-0")
 	require.NoError(t, err)
 	assert.Empty(t, tenant, "LLM events do not reach the tenant administrators")
 }

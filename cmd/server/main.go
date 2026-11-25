@@ -73,14 +73,18 @@ func run(ctx context.Context, cfg *config.Config, log Logger) error {
 		DialTimeout:  cfg.ValkeyDialTimeout,
 		ReadTimeout:  cfg.ValkeyReadTimeout,
 		WriteTimeout: cfg.ValkeyWriteTimeout,
+		PoolSize:     cfg.ValkeyPoolSize,
 	})
 	cancel()
 	if err != nil {
 		return err
 	}
+	streamClient := valkey.NewStreamClient(client, cfg.ValkeyStreamPoolSize)
 	defer func() {
-		if closeErr := client.Close(); closeErr != nil {
-			log.Error("valkey close", map[string]interface{}{"error": closeErr.Error()})
+		for _, c := range []io.Closer{streamClient, client} {
+			if closeErr := c.Close(); closeErr != nil {
+				log.Error("valkey close", map[string]interface{}{"error": closeErr.Error()})
+			}
 		}
 	}()
 
@@ -93,7 +97,7 @@ func run(ctx context.Context, cfg *config.Config, log Logger) error {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           newRouter(ctx, cfg, ginCfg, client, routes),
+		Handler:           newRouter(ctx, cfg, ginCfg, client, streamClient, routes),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
