@@ -63,7 +63,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 }
 
 func notFound(c *gin.Context) {
-	writeProblem(c, http.StatusNotFound, "not-found", "no route matches "+c.Request.Method+" "+c.Request.URL.Path)
+	writeProblem(c, http.StatusNotFound, "not-found", "no route matches "+c.Request.Method+" "+c.Request.URL.EscapedPath())
 }
 
 func refuseEncodedSlash(c *gin.Context) {

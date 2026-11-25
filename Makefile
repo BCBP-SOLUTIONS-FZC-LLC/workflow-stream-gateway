@@ -120,7 +120,7 @@ test-integration:
 	go test -race -count=1 -tags integration \
 	    -coverpkg=./internal/...,./cmd/... \
 	    -coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
-	    ./test/integration/... ./cmd/...
+	    ./test/integration/... ./cmd/... ./internal/...
 
 ## merge-coverage: Merge the unit and integration profiles into coverage.out
 merge-coverage:

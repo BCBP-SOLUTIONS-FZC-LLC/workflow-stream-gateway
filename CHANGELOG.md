@@ -14,6 +14,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - The ticket-mint rate counter and the connection counter set their expiry in the same atomic step as the increment. A failed second command used to leave a counter without an expiry, refusing the user for good; the connection cap is now checked before the increment, so a refused connect leaves the count unchanged.
 - A replica told to stop ends its open streams at their next wake-up and waits one heartbeat interval plus five seconds (at least ten), and always shuts down both listeners. Shutdown with a connected browser used to run into the timeout and exit with an error.
 - The resume cursor names every tailed stream that holds an entry from the first frame, so a reconnect after a resync no longer resyncs again; and a payload with line breaks is written as one `data:` line per payload line, so it can no longer start another SSE field or end the event early.
+- A problem response names the path as it was sent: a refused `/api/v1/internal%2Fevents` used to read "no route matches POST /api/v1/internal/events", a path that does have a route.
 - A ticket is minted only when the tenant, user and every department id are lower-case UUIDs; any other value is refused with 401, since these ids form the Valkey keys and a key separator in one could name another tenant's key.
 
 ### Changed
