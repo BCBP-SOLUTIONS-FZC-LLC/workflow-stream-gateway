@@ -144,6 +144,13 @@ networkPolicy:
       kubernetes.io/metadata.name: observability
     podSelector:
       app.kubernetes.io/name: prometheus
+  # Callers of the API port from other namespaces, each a namespace and pod selector pair. PLACEHOLDER,
+  # confirm with Platform: the LLM subsystem's consumer (POST /api/v1/internal/events).
+  otherNamespaceCallers:
+    - namespaceSelector:
+        kubernetes.io/metadata.name: llm
+      podSelector:
+        app.kubernetes.io/name: llm-retrieval-generation
   additionalIngressRules: []
   additionalEgressRules: []
 
@@ -170,6 +177,9 @@ authorizationPolicy:
       callers:
         - namespace: workflow-app
           serviceAccount: workflow-events-consumer
+        # The LLM subsystem's own consumer forwards its generation events; its namespace is Platform's to set.
+        - namespace: llm
+          serviceAccount: llm-retrieval-generation
 
 prometheusRule:
   enabled: false
@@ -241,20 +251,35 @@ routing:
   services:
     workflow:
       source: workflow-execution-svc
+      tenant_admins: true
       events:
-        WorkflowTaskCreated:     { recipients: [assignee_user_ids], department: department_id }
-        WorkflowTaskClaimed:     { recipients: [assignee_user_ids], department: department_id }
-        WorkflowTaskCompleted:   { recipients: [assignee_user_ids], department: department_id }
-        WorkflowTaskDeferred:    { recipients: [assignee_user_ids], department: department_id }
-        WorkflowTaskReassigned:  { recipients: [old_user_id, new_user_id], department: department_id }
-        WorkflowTaskSuperseded:  { recipients: [assignee_user_ids], department: department_id }
-        WorkflowTaskFailed:      { recipients: [assignee_user_ids], department: department_id }
-        WorkflowTaskSlaWarning:  { recipients: [assignee_user_ids], department: department_id }
-        WorkflowTaskSlaBreached: { recipients: [assignee_user_ids], department: department_id }
-        WorkflowInstancePaused:     { recipients: [started_by_user_id] }
-        WorkflowInstanceResumed:    { recipients: [started_by_user_id] }
-        WorkflowInstanceCancelled:  { recipients: [started_by_user_id] }
-        WorkflowInstanceTerminated: { recipients: [started_by_user_id] }
-        WorkflowInstanceDegraded:   { recipients: [started_by_user_id] }
-        WorkflowInstanceFailed:     { recipients: [started_by_user_id] }
-        WorkflowInstanceFinished:   { recipients: [started_by_user_id] }
+        - WorkflowTaskCreated
+        - WorkflowTaskClaimed
+        - WorkflowTaskCompleted
+        - WorkflowTaskDeferred
+        - WorkflowTaskReassigned
+        - WorkflowTaskSuperseded
+        - WorkflowTaskFailed
+        - WorkflowTaskSlaWarning
+        - WorkflowTaskSlaBreached
+        - WorkflowInstancePaused
+        - WorkflowInstanceResumed
+        - WorkflowInstanceCancelled
+        - WorkflowInstanceTerminated
+        - WorkflowInstanceDegraded
+        - WorkflowInstanceFailed
+        - WorkflowInstanceFinished
+    llm:
+      source: llm-retrieval-generation
+      tenant_admins: false
+      events:
+        - GenerationStarted
+        - GenerationProgressed
+        - OutlineReady
+        - SectionCompleted
+        - GenerationCompleted
+        - GenerationFailed
+        - GenerationCancelled
+        - GenerationGapReported
+        - ArtefactRegenerated
+        - ExtractionCompleted

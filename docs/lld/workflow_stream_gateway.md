@@ -10,8 +10,8 @@
 | Service | Workflow Stream Gateway (`workflow-stream-gateway`) |
 | Supersedes | `dashboard_stream_gateway.md` (proposal, rev 1.2) — see that document's own superseded banner |
 | Subsystem | Workflow Engine — real-time dashboard push |
-| Version | 1.18 |
-| Date | 2026-11-24 |
+| Version | 1.19 |
+| Date | 2026-11-25 |
 | Status | Approved |
 | Audience | Workflow Engine team, platform/infra |
 | Owner database | None — Valkey only (stateless service) |
@@ -39,6 +39,7 @@
 | 1.16 | 2026-11-11 | **One authorization rule per internal route, a render guard, the raw-path router and the metric labels** (§3.2; §5.4; §9.5; §11). The authorization policy holds one rule per internal route group: the route `POST /api/v1/internal/events`, named by its exact path, with the shared events consumer as its caller. The chart refuses to render with the policy off for `staging` and `prod` unless it is explicitly allowed. The policy needs a sidecar with mutual TLS, and `PeerAuthentication` is Platform's. The router matches the raw path and answers `404` for any path that contains an encoded slash. The `event_type` label of the ingest counter is a handled type or `unknown`. A new counter, `workflow_stream_gateway_internal_auth_rejected_total{reason}`, counts internal requests refused for a missing identity (`missing_user`, `missing_role`). |
 | 1.17 | 2026-11-22 | **The reassigned event names the old assignee only when there was one** (§3.1; §6.1; §13). `old_user_id` is optional on `WorkflowTaskReassigned`; the event reaches the new assignee alone when it is absent. |
 | 1.18 | 2026-11-24 | **Routing is a file keyed by publishing service, and the SSE event name carries the service** (§3.1; §3.2; §4; §6; §7; §12; Appendix A decisions 5 and 19; Appendix B). Which events are rendered, and to whom, comes from a routing file read at start-up: one section per publishing service, matched by the envelope `source`, each listing its event types with their recipient fields and optional department field. Execution's 16 types are the shipped `workflow` section; Tender and LLM join as sections once their events are known, with no code change. A pair of `source` and type the file does not list is acknowledged with `200` and ignored. The `event:` line is `<service>.<type>`. A malformed file fails start-up, and a change reaches the pods by a rollout. |
+| 1.19 | 2026-11-25 | **Every publisher names its readers in one `recipients` list, and LLM generation events are the second section** (§1; §3.1; §3.2; §4; §6; §13; Appendix A decisions 5, 14, 19 and 20; Appendix B). Each routed payload carries `recipients`, a list of `{kind, id}` with `kind` `user` or `department`; the routing file no longer names payload fields, and lists per service its source, whether its events reach the tenant's administrators, and its event types. The `llm` section (source `llm-retrieval-generation`) routes the ten generation types, forwarded by the LLM subsystem's own consumer, and does not reach administrators. |
 
 ---
 
@@ -69,9 +70,9 @@ The Workflow Stream Gateway projects Execution Service's outbound domain events 
 
 It relays domain events verbatim — no aggregation, no enrichment, no diffing. The frontend's own reducer folds each event into local state; UUID→display-name enrichment is the frontend's own concern (composing IAM's `/users:batch`/`/departments` directly), unchanged by anything in this document.
 
-**In scope:** consuming Execution's outbound event stream (via `event_consumer`, §3), fan-out routing to the correct browser connections — personal, tenant-wide, and per-department (§6) — the SSE connection/ticket-auth lifecycle (§5, §9), and reconnection/backfill (§8).
+**In scope:** consuming Execution's outbound event stream (via `event_consumer`, §3) and the LLM subsystem's generation events (via its own consumer, §3), fan-out routing to the correct browser connections — personal, tenant-wide, and per-department (§6) — the SSE connection/ticket-auth lifecycle (§5, §9), and reconnection/backfill (§8).
 
-**Out of scope:** the Tender and LLM event types themselves. Both services will publish to this gateway; each joins as a section of the routing file (§6) once its event types and recipient fields are known, tracked in Appendix B.
+**Out of scope:** the event types themselves, which their publishers own. Tender, and LLM Ingestion, join as sections of the routing file (§6) once their event types are defined, tracked in Appendix B.
 
 ---
 
@@ -188,22 +189,37 @@ The `wf-workflow-dash-q` SNS subscription's own filter policy (on the `EventType
 | `WorkflowInstanceFailed` | A main-path failure ended the instance; its open tasks failed. |
 | `WorkflowInstanceFinished` | An instance reached its BPMN terminal node cleanly. |
 
-**Routing file.** Which events this service renders, and to whom, comes from one routing file read at start-up (§6). It holds one section per publishing service, matched by the envelope's `source`: the `workflow` section (source `workflow-execution-svc`) lists the 16 types above. Tender and LLM join as sections of their own once their event types are known; a new section needs no code change.
+**LLM generation events.** The LLM subsystem's own consumer subscribes a queue to its `llm-generation-events` topic and forwards each event, unchanged, to the same `POST /api/v1/internal/events` (§3.2), with the same system caller identity. Ten types reach the browser, each owned and registered by `llm-retrieval-generation`:
+
+| Wire `type` | Dashboard meaning |
+| --- | --- |
+| `GenerationStarted` | A generation run was admitted. |
+| `GenerationProgressed` | A run moved to a new stage; `progress_seq` orders a run's events, and the browser keeps the highest. |
+| `OutlineReady` | The run waits for the user to approve its outline. |
+| `SectionCompleted` | One section of the run finished. |
+| `GenerationCompleted` | The run finished. |
+| `GenerationFailed` | The run failed. |
+| `GenerationCancelled` | The run was cancelled. |
+| `GenerationGapReported` | The run is blocked until the user supplies a missing input. |
+| `ArtefactRegenerated` | A regeneration produced a new document version. |
+| `ExtractionCompleted` | A structured extraction finished; the view of its results refreshes. |
+
+**Routing file.** Which events this service renders comes from one routing file read at start-up (§6). It holds one section per publishing service, matched by the envelope's `source`: the `workflow` section (source `workflow-execution-svc`) lists the 16 workflow types above, and the `llm` section (source `llm-retrieval-generation`) the ten generation types. A new section needs no code change.
 
 ### 3.2 `POST /internal/events`
 
 Identical contract shape to Execution Service's and Definition Service's own `/internal/events` endpoints (`execution_service.md` §6.1, `definition_service.md` §3.3.17) — this is a platform-wide convention, not reinvented here.
 
 - **Route.** `POST /api/v1/internal/events`, under the `/api/v1/internal` route group. **Not** exposed via the Envoy Gateway — no gateway identity headers ever reach it. The router matches the raw path and answers `404` for any path that contains an encoded slash, so an encoded slash is never read as part of the internal prefix.
-- **Auth.** A system caller identity check, the convention the IAM services use among themselves: the request must carry `x-tenant-roles` holding `iam-system` and an `x-user-id`. The headers are not a credential: mutual TLS in the mesh names the caller, and the authorization policy holds one rule per internal route group. The one group is the route `POST /api/v1/internal/events`, named by its exact path because a wildcard path never matches the prefix itself, and its caller is the shared events consumer (`workflow-app/workflow-events-consumer`). A route group with no caller has no rule and stays closed. The NetworkPolicy admits the events consumer as a pod. The policy needs a sidecar with mutual TLS on both ends, and the mesh-wide `PeerAuthentication` is Platform's. The chart refuses to render with the policy off for `staging` and `prod` unless it is explicitly allowed. A request without both identity headers returns `401` with an RFC-9457 body (`type: https://errors.bcbp.io/workflow-stream-gateway/unauthorized`).
-- **Request body.** One `events.Envelope[json.RawMessage]` (`platform-events/v2/pkg/events`, the exact 13-field shape specified in §7 below), forwarded verbatim by `event_consumer`.
+- **Auth.** A system caller identity check, the convention the IAM services use among themselves: the request must carry `x-tenant-roles` holding `iam-system` and an `x-user-id`. The headers are not a credential: mutual TLS in the mesh names the caller, and the authorization policy holds one rule per internal route group. The one group is the route `POST /api/v1/internal/events`, named by its exact path because a wildcard path never matches the prefix itself, and its callers are the shared events consumer (`workflow-app/workflow-events-consumer`) and the LLM subsystem's consumer (service account `llm-retrieval-generation`, in a namespace the platform team sets). A route group with no caller has no rule and stays closed. The NetworkPolicy admits the events consumer as a pod of the same namespace, and the LLM subsystem's consumer as a pod of its own namespace. The policy needs a sidecar with mutual TLS on both ends, and the mesh-wide `PeerAuthentication` is Platform's. The chart refuses to render with the policy off for `staging` and `prod` unless it is explicitly allowed. A request without both identity headers returns `401` with an RFC-9457 body (`type: https://errors.bcbp.io/workflow-stream-gateway/unauthorized`).
+- **Request body.** One `events.Envelope[json.RawMessage]` (`platform-events/v2/pkg/events`, the exact 13-field shape specified in §7 below), forwarded verbatim by the publisher's consumer.
 - **Handler behavior.**
   1. Decode the envelope. A malformed body (unparseable JSON, or missing any of `id`/`type`/`source`/`time` — `events.ParseEnvelope`'s own validation) → `400`, non-retryable.
   2. If the routing file (§6) does not list the pair of `source` and `type` → log, count, `200` — the same forward-compatibility convention every other `/internal/events` handler in this platform uses (`execution_service.md` §6.1: "unknown event types are accepted and ignored with 200"), so an upstream team adding a new event type never breaks delivery here.
-  3. Otherwise, read from the payload the recipient fields and the department field that the routing entry names (§6). A payload that is not a JSON object, or a named field of the wrong type, → `400`, non-retryable.
-  4. For each recipient, `XADD sse:events:<tenant_id>:<user_id>` (§4) the rendered SSE frame (§7).
+  3. Otherwise, read the payload's `recipients` list (§6). A payload that is not a JSON object, a `recipients` that is not a list, or an entry that is not an object with a `kind` of `user` or `department` and an `id` of 1 to 128 characters → `400`, non-retryable.
+  4. `XADD` the rendered SSE frame (§7) to each named user's stream, to the tenant-wide stream when the section reaches administrators, and to each named department's stream (§4, §6).
   5. Respond `200` only once every `XADD` in step 4 has succeeded. A single Valkey write failure aborts the handler and responds `502` — transient, safe to retry. **A retry that re-delivers to recipients whose `XADD` already succeeded is harmless**: §8 already establishes duplicate SSE delivery as a no-op for an idempotent frontend reducer, and this service holds no dedup table of its own (§9.2 explains why one isn't needed, unlike Execution's/Definition's own `processed_event`-backed handlers).
-- **Retry/DLQ ownership.** Entirely `event_consumer`'s — per-queue visibility timeout, `maxReceiveCount`, and DLQ routing are that service's infra config, not this service's application code (matching `execution_service.md` §6.1's identical delegation).
+- **Retry/DLQ ownership.** Entirely the forwarding consumer's — per-queue visibility timeout, `maxReceiveCount`, and DLQ routing are that service's infra config, not this service's application code (matching `execution_service.md` §6.1's identical delegation).
 
 ---
 
@@ -213,8 +229,8 @@ Identical contract shape to Execution Service's and Definition Service's own `/i
 | --- | --- | --- | --- | --- |
 | `ssegw:ticket:<token>` | JSON: `{tenant_id, user_id, tenant_roles[], departments[{department_id, role}], plan, feature_flags[], issued_at}` — a snapshot of the caller's own gateway-injected headers at mint time, `x-departments`' `<department_id>:<role>` pairs parsed into structured entries (not left as raw strings) | 60s | `POST /api/v1/stream/tickets` | `GET /api/v1/stream` (ticket validation, and broadcast-eligibility computation, §6) |
 | `sse:events:<tenant_id>:<user_id>` | Personal Valkey Stream; each entry is one rendered SSE frame (§7), `XADD`ed with `MINID ~` trimming to a 10-minute retention window | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out (§3.2 step 4) | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill, §8) |
-| `sse:events:broadcast:<tenant_id>` | Tenant-wide Valkey Stream (§6) — every event the routing file lists, same trim/TTL shape as the personal key | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, unconditionally for every known event | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket whose `tenant_roles` includes `tenant_admin`/`tenant_owner` |
-| `sse:events:broadcast:<tenant_id>:<department_id>` | One department's Valkey Stream (§6) — the 9 task-scoped event types only, same trim/TTL shape | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, for task-scoped events whose payload `department_id` matches | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket holding any role in that department |
+| `sse:events:broadcast:<tenant_id>` | Tenant-wide Valkey Stream (§6) — every event of a section that reaches administrators, same trim/TTL shape as the personal key | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, for every routed event of such a section | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket whose `tenant_roles` includes `tenant_admin`/`tenant_owner` |
+| `sse:events:broadcast:<tenant_id>:<department_id>` | One department's Valkey Stream (§6) — every event whose `recipients` names the department, same trim/TTL shape | `EXPIRE 900`, refreshed on every write | `POST /internal/events` fan-out, once per department entry | `GET /api/v1/stream` (`XREAD` for live tail, `XRANGE` for reconnect backfill via the compound cursor, §8) — for a ticket holding any role in that department |
 | `sse:conncount:<tenant_id>:<user_id>` | Integer counter of currently-open SSE connections for this user | `EXPIRE` set on increment to a value longer than the ticket TTL and refreshed on every wake-up of the open connection, so a long-lived connection stays counted; release deletes the key at zero and never leaves it negative | `GET /api/v1/stream` on connect (increment) / disconnect (decrement) | `GET /api/v1/stream` on connect (cap check, §9.3) |
 | `sse:ticketrate:<tenant_id>:<user_id>` | Fixed-window counter, mint attempts in the current rolling minute | 60s, reset each window | `POST /api/v1/stream/tickets` | `POST /api/v1/stream/tickets` (rate check, §9.3) |
 
@@ -273,51 +289,62 @@ Some refusals come from the shared platform middleware instead, in its own flat 
 
 ## 6. Fan-Out Routing
 
-Every known event is written to up to three tiers of Valkey Stream (§4) — decided 2026-08-24, after rejecting an admin-only-bypass design in favor of a general (tenant, role) / (department, role) model: every role gets a complete feed for its own scope, not just a privileged subset, and a user holding roles in multiple departments gets all of them.
+Every routed event is written to up to three tiers of Valkey Stream (§4) — decided 2026-08-24, after rejecting an admin-only-bypass design in favor of a general (tenant, role) / (department, role) model: every role gets a complete feed for its own scope, not just a privileged subset, and a user holding roles in multiple departments gets all of them.
 
-**Routing file.** Routing is data. A YAML file names, per publishing service and event type, the payload fields that hold the personal recipients and, optionally, the field that holds the department ID:
+**Recipients.** The publisher names the readers of every routed event in the payload, in one structure shared by every service:
+
+```json
+"recipients": [ { "kind": "user", "id": "<user id>" }, { "kind": "department", "id": "<department id>" } ]
+```
+
+- A `user` entry writes the event to that user's stream in the envelope's tenant (§6.1); a `department` entry to that department's stream (§6.3).
+- `kind` is `user` or `department`, and `id` is 1 to 128 characters; any other entry refuses the event (§3.2). A repeated entry is written once. A missing, `null` or empty list names no one.
+- The gateway reads no other payload field, so a new event type needs no gateway change beyond its entry in the routing file.
+
+**Routing file.** Routing is data. A YAML file lists, per publishing service, its envelope `source`, whether its events reach the tenant's administrators, and its event types:
 
 ```yaml
 version: 1
 services:
   workflow:
     source: workflow-execution-svc
-    events:
-      WorkflowTaskCreated:    { recipients: [assignee_user_ids], department: department_id }
-      WorkflowTaskReassigned: { recipients: [old_user_id, new_user_id], department: department_id }
-      WorkflowInstancePaused: { recipients: [started_by_user_id] }
+    tenant_admins: true
+    events: [WorkflowTaskCreated, WorkflowTaskReassigned, WorkflowInstancePaused]
+  llm:
+    source: llm-retrieval-generation
+    tenant_admins: false
+    events: [GenerationStarted, GenerationProgressed, OutlineReady]
 ```
 
 - An event is looked up by the envelope's `source` and `type`; two services may use the same type name. A pair the file does not list is acknowledged and ignored (§3.2).
-- A recipient field holds one user ID or an array of them; an empty value is skipped. Every listed event is written to the tenant-wide tier, and an event with a department field is also written to that department's tier.
-- The file is read once at start-up. A file with an unknown key, more than one document, a version other than 1, no services, a service name other than lowercase letters, digits and dashes, a service with no source or no events, a source shared by two services, or an event type that is not letters, digits, dots, dashes and underscores, or an event with no recipient field or a repeated one fails start-up.
+- The file is read once at start-up. A file with an unknown key, more than one document, a version other than 1, no services, a service name other than lowercase letters, digits and dashes, a service with no source, no `tenant_admins` or no events, a source shared by two services, or an event type that is not letters, digits, dots, dashes and underscores, or that is listed twice, fails start-up.
 - A change reaches the pods by a rollout, which the chart triggers when the file changes; the service never re-reads the file while running.
-
-The tables below are the shipped `workflow` section.
 
 ### 6.1 Personal tier
 
-Routing key: `(tenant_id, user_id)`, derived per-event from the payload's own recipient field(s) — no lookup, no enrichment.
+Routing key: `(tenant_id, user_id)`, one per `user` entry — no lookup, no enrichment. For each, the `/internal/events` handler (§3.2) writes one entry into that user's Valkey Stream; a task with three assignees produces three `XADD` calls from one ingested envelope.
 
-| Event class | Recipient field(s) | Recipients |
-| --- | --- | --- |
-| Task-scoped (`WorkflowTask*`, except reassigned) | `assignee_user_ids[]` | every user in the array |
-| `WorkflowTaskReassigned` | `old_user_id` (optional), `new_user_id` | the new assignee always ("added to your list"); the old assignee too when the event names one ("removed from your list") |
-| Instance-scoped (`WorkflowInstance*`) | `started_by_user_id` | always |
+The Workflow Execution Service names:
 
-For each recipient, the `/internal/events` handler (§3.2) writes one entry into that user's Valkey Stream — a task with three assignees produces three `XADD` calls from one ingested envelope.
+| Event class | Users named |
+| --- | --- |
+| Task-scoped (`WorkflowTask*`, except reassigned) | every assignee |
+| `WorkflowTaskReassigned` | the new assignee always ("added to your list"); the previous assignee too when there was one ("removed from your list") |
+| Instance-scoped (`WorkflowInstance*`) | the user who started the instance |
+
+The LLM subsystem names the users the request that started the run named, as Tender sent them; the list is the same on every event of one run.
 
 ### 6.2 Tenant-wide tier
 
-Every known event (all 9 task-scoped and all 7 instance-scoped types) is additionally written to `sse:events:broadcast:<tenant_id>` (§4), unconditionally — one extra `XADD` per ingested envelope, independent of how many personal recipients it had.
+Every routed event of a section whose `tenant_admins` is true is additionally written to `sse:events:broadcast:<tenant_id>` (§4) — one extra `XADD` per ingested envelope, independent of how many recipients it names. The `workflow` section reaches administrators, because they oversee every task. The `llm` section does not: generation progress, `SectionCompleted` above all, would reach every open administrator connection for every user's run, with nothing for an administrator to act on.
 
 **Eligibility.** A `GET /api/v1/stream` connection also live-tails this stream iff the ticket's `tenant_roles` includes `tenant_admin` or `tenant_owner` — the exact role names `execution_service`'s own `isAdmin()`/`requireAdmin()` gate on (`internal/adapter/inbound/http/handler/handler.go:20-24`), not a bare `"admin"` string, since this platform has no platform-level "admin" role at all (`x-tenant-roles` is fully open-ended, syntax-validated only).
 
 ### 6.3 Department tier
 
-Task-scoped events only (the 9 types with an `assignee_user_ids[]`/`old_user_id`+`new_user_id` recipient field) are additionally written to `sse:events:broadcast:<tenant_id>:<department_id>` (§4), using the event payload's own `department_id` field (confirmed present in both the AsyncAPI schema and the actual emitted Go payload for all 9 types, `TaskScopedCore.DepartmentID`). **Instance-scoped events are never written to a department tier** — `workflow_instance` has no `department_id` at all in `execution_service`'s domain model, and a single instance's tasks can legitimately span multiple departments over its lifecycle; there is no well-defined "the instance's department" to key on.
+An event is additionally written to `sse:events:broadcast:<tenant_id>:<department_id>` (§4) once for each `department` entry in its `recipients`. The Workflow Execution Service names the task's department on the 9 task-scoped types. **It names no department on instance-scoped events** — `workflow_instance` has no `department_id` at all in `execution_service`'s domain model, and a single instance's tasks can legitimately span multiple departments over its lifecycle; there is no well-defined "the instance's department" to key on. The LLM subsystem names the departments the run's request named.
 
-**Eligibility.** A connection live-tails one department's stream for every distinct `department_id` present in the ticket's parsed `x-departments` entries — **any role** in that department qualifies, not a privileged subset (the user's own framing: "complete for each role"). A ticket eligible for the tenant-wide tier (§6.2) does **not** also separately subscribe to its department tier(s) — the tenant-wide stream is already a superset, and subscribing to both would only produce duplicate frames.
+**Eligibility.** A connection live-tails one department's stream for every distinct `department_id` present in the ticket's parsed `x-departments` entries — **any role** in that department qualifies, not a privileged subset (the user's own framing: "complete for each role"). A ticket eligible for the tenant-wide tier (§6.2) does **not** also separately subscribe to its department tier(s) — the tenant-wide stream already holds every event of a section that reaches administrators, and subscribing to both would only produce duplicate frames. So an administrator receives an event of a section that does not reach administrators only when it names that administrator as a user.
 
 ### 6.4 Delivery mechanics and isolation
 
@@ -336,7 +363,7 @@ Frame shape:
 ```text
 id: 1721734567123-0
 event: workflow.WorkflowTaskCompleted
-data: {"id":"018f2c3e-6b1a-7c40-9e2f-...","type":"WorkflowTaskCompleted","source":"workflow-execution-svc","specversion":"1","tenant_id":"6f1e2b90-...","trace_id":"7e115i6800e67gd9d6f252g313b7069","correlation_id":"","subject":"instances/b6e2b6f0-.../tasks/...","actor":"","ip_address":"","user_agent":"","dataschema":"","time":"2026-07-23T10:02:33.100Z","data":{"workflow_instance_id":"b6e2b6f0-...","business_key":"TND-2026-04471","task_id":"...","node_key":"approve-final","assignee_user_ids":["..."],"completed_by_user_id":"..."}}
+data: {"id":"018f2c3e-6b1a-7c40-9e2f-...","type":"WorkflowTaskCompleted","source":"workflow-execution-svc","specversion":"1","tenant_id":"6f1e2b90-...","trace_id":"7e115i6800e67gd9d6f252g313b7069","correlation_id":"","subject":"instances/b6e2b6f0-.../tasks/...","actor":"","ip_address":"","user_agent":"","dataschema":"","time":"2026-07-23T10:02:33.100Z","data":{"workflow_instance_id":"b6e2b6f0-...","business_key":"TND-2026-04471","task_id":"...","node_key":"approve-final","assignee_user_ids":["..."],"completed_by_user_id":"...","recipients":[{"kind":"user","id":"..."},{"kind":"department","id":"..."}]}}
 
 ```
 
@@ -413,7 +440,7 @@ workflow-stream-gateway/
 │   │       ├── valkey/               # ticket store, streams, counters (go-redis/v9)
 │   │       └── routingfile/          # loads and checks the routing file (§6)
 │   └── config/
-├── config/routing.yaml               # shipped routing file: the workflow section (§6)
+├── config/routing.yaml               # shipped routing file: the workflow and llm sections (§6)
 ├── deploy/helm/templates/
 │   ├── configmap-routing.yaml        # the routing file from the chart's routing values
 │   ├── httproute.yaml                # one HTTPRoute per path: tickets, stream (§10.3)
@@ -481,13 +508,13 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 ## 13. Testing Strategy
 
 - **Ticket lifecycle:** mint → validate → expire; reusable-within-TTL behavior (a second `GET /api/v1/stream` with the same still-valid ticket succeeds, matching native `EventSource` reconnect on a brief blip).
-- **Fan-out correctness:** one ingested envelope with N recipients produces exactly N `XADD` calls, correct key per recipient; `WorkflowTaskReassigned` produces exactly 2 (`old_user_id`, `new_user_id`) when the event names an old assignee and exactly 1 (`new_user_id`) when it does not, never conflated.
+- **Fan-out correctness:** one ingested envelope naming N users produces exactly N personal `XADD` calls, correct key per user, one per named department, and one tenant-wide write only for a section that reaches administrators; a repeated entry is written once, and each malformed `recipients` shape is refused with `400` before any write.
 - **Partial-failure retry semantics (§3.2):** simulate a Valkey write failure on recipient 2 of 3 — assert `502`, and that a subsequent retry's duplicate `XADD` to recipients 1 and 3 is harmless (stream contains the duplicate, not an error).
 - **Reconnect/backfill:** `XRANGE`-based replay within the 10-minute window; `resync-required` frame beyond it.
 - **Isolation:** a ticket minted for `(tenant A, user 1)` can never read `(tenant A, user 2)`'s or `(tenant B, user 1)`'s stream — construct a `GET /api/v1/stream` call attempting to pass a client-supplied `tenant_id`/`user_id` and assert it's ignored entirely (identity comes only from the ticket).
 - **Connection counter:** the cap holds under concurrent connects, a release never leaves the counter below zero, and an open connection refreshes the counter so it outlives its initial lifetime; verified against a real Valkey.
 - **Request size:** a body over 10 MiB on the ticket and internal ingest routes is rejected with `413`.
-- **Contracts:** the OpenAPI lists exactly the routes the router serves, and the AsyncAPI documents exactly the 16 event types the service routes.
+- **Contracts:** the OpenAPI lists exactly the routes the router serves, and the AsyncAPI documents, channel by channel, exactly the event types each section of the routing file routes, each with the `recipients` list.
 - **Fail-closed:** both ticket endpoints under a simulated Valkey outage return `503`, never a silent allow.
 - **Errors:** every refusal is a problem document carrying the response's correlation ids and the documented code, an unknown path included.
 - **Alerts:** each alert's `runbook` annotation names an entry the runbooks document.
@@ -504,7 +531,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 | 2 | SSE auth: short-lived (60s), reusable-within-TTL, opaque Valkey ticket minted via an authenticated REST call, passed as `?ticket=` on `GET /api/v1/stream` | Solves `EventSource`'s no-custom-headers limitation without a new session-cookie mechanism; reusability preserves native browser reconnect on brief blips. Carried from the superseded proposal, unaffected by Decision 1. |
 | 3 | `GET /api/v1/stream` is carved out of the standard gateway JWT-validation chain by this service's own route policy; this service validates the ticket itself | The carve-out lives with the service that implements the replacement authentication, as every Workflow service owns its own route policy (§10.3). No `Authorization` header will ever reach this route — the same class of exception `/internal/events` routes already establish, for a different reason (browser-unauthenticatable vs. machine-to-machine). |
 | 4 | Ticket-store lookups fail closed (`503`) on Valkey unavailability | Auth-critical, unlike the fail-open compiled-plan-cache precedent elsewhere in this platform. |
-| 5 | Fan-out routing key is `(tenant_id, user_id)`, derived per-event from the recipient fields the routing file names for the event's service and type (`assignee_user_ids[]`, `started_by_user_id`, `old_user_id`+`new_user_id` for the `workflow` section) | Matches the platform's existing outbound-event payload-shaping convention exactly; no lookup needed. |
+| 5 | Fan-out routing key is `(tenant_id, user_id)`, one per `user` entry of the payload's `recipients` list (§6) | No lookup is needed: the publisher already knows who an event concerns. |
 | 6 | `data:` is the domain event's own envelope+payload verbatim | A real JSON Patch model needs a canonical-state-diffing engine this component explicitly isn't; the frontend's existing reducer pattern already handles self-describing facts. |
 | 7 | Backfill store is one Valkey Stream per target (personal, tenant-wide, or per-department), each `MINID`-trimmed to ~10 minutes, read via plain `XREAD`/`XRANGE` for both live-tail and reconnect | Reuses already-adopted infra; unifies live delivery and backfill in one mechanism; removes any need for sticky/consistent-hash connection routing. |
 | 8 | Beyond the 10-minute window: emit `event: resync-required`, client performs one REST re-fetch then resumes SSE | Grounds the platform's original vague "falls back to REST polling" language into a concrete, bounded mechanism. |
@@ -513,12 +540,13 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
 | 11 | New standalone repo (`workflow-stream-gateway`), not nested inside Execution Service's or any other service's repo | This is cross-service infrastructure with its own scaling axis (connection count, not QPS/Temporal-worker-throughput), never dependent on the retired Management Service's other three responsibilities, and was never designed to share a deploy unit with Execution or Definition. |
 | 12 | No websocket anywhere in this design — neither the `event_consumer`-facing hop nor the browser-facing hop | Both hops are one-directional push only; a websocket only pays off when a bidirectional need exists, and neither side of this service has one (§2.5). |
 | 13 | Broadcast (§6) is a two-tier (tenant-wide, per-department) model, not an admin-only bypass — every role gets a complete feed for its own scope, and a user with roles in multiple departments gets all of them | Decided 2026-08-24 after rejecting an earlier "admin sees everything, nobody else gets anything extra" design. Eligibility reuses `execution_service`'s real `tenant_admin`/`tenant_owner` role names (this platform has no platform-level `"admin"` role at all). Required fixing an independent, pre-existing bug in `execution_service` first: `x-departments`' `<department_id>:<role>` pairs were never split on `:` before comparison, so department-scoped visibility silently never matched. |
-| 14 | The department tier only ever carries task-scoped events, never instance-scoped ones | `workflow_instance` has no `department_id` in `execution_service`'s domain model at all — confirmed structurally, not assumed — and a single instance's tasks can legitimately span multiple departments over its lifecycle, so there is no well-defined "the instance's department" to key a department stream on. |
+| 14 | Workflow instance-scoped events name no department | `workflow_instance` has no `department_id` in `execution_service`'s domain model at all — confirmed structurally, not assumed — and a single instance's tasks can legitimately span multiple departments over its lifecycle, so there is no well-defined "the instance's department" to key a department stream on. |
 | 15 | Superseded — see Decision 16 and Revision history. | — |
 | 16 | The SSE `id:` line is a compound cursor (`"<key>=<id>\|<key>=<id>..."`), one pair per stream key the connection tails, not a bare Stream ID (§8) | `EventSource` remembers exactly one `Last-Event-ID` value; a connection tailing 2+ streams needs that one string to carry every stream's resume position, or a quiet stream's position gets silently lost across reconnects. |
 | 17 | Liveness (`/healthz`) and readiness (`/readyz`) are separate endpoints, not one dependency-checking endpoint backing both | Sharing one dependency-checking endpoint between liveness and readiness means a transient Valkey blip causes Kubernetes to kill and restart the pod (liveness failure) rather than just pull it from load-balancer rotation (readiness failure) — a real operational risk, not a cosmetic gap. `/healthz` is a bare "process is running" 200; `/readyz` carries the Valkey ping. |
 | 18 | `gincommon.Config.Logger` is `platform-gincommon/pkg/logger.NewLogger` (Zap-backed), not a bespoke adapter over a different logging library | `execution_service`, `definition_service`, and `iam-user-profile` all already construct their logger this exact way and pass the result straight into `gincommon.Config{Logger: ...}` — the returned type already satisfies gincommon's port, so no adapter is needed at all. Matching this closes a real gap rather than trading one valid option for another. |
-| 19 | Routing is a file keyed by publishing service, then event type, and the SSE `event:` name is `<service>.<type>` | Tender and LLM will publish to the gateway with event types not yet known; a file makes each one a configuration change, keying by service lets two services use the same type name, and the prefixed name keeps them apart in the browser. The file is read at start-up and changed by rollout rather than reloaded, so every replica routes the same way and a bad file never replaces a working one. |
+| 19 | Routing is a file keyed by publishing service, then event type, and the SSE `event:` name is `<service>.<type>` | Services beyond Workflow publish to the gateway, some with event types not yet defined; a file makes each one a configuration change, keying by service lets two services use the same type name, and the prefixed name keeps them apart in the browser. The file is read at start-up and changed by rollout rather than reloaded, so every replica routes the same way and a bad file never replaces a working one. |
+| 20 | Every publisher names its readers in one `recipients` list of `{kind, id}`, and each service section says whether its events reach the tenant's administrators | The publisher knows who an event concerns, so the gateway reads one structure and maps no payload fields per event; one event can name several users and several departments; the LLM subsystem had already designed this shape with Tender. Administrators follow every workflow task, but a feed of every user's generation progress gives them nothing to act on, so the switch is per service. |
 
 ---
 
@@ -531,5 +559,7 @@ The ticket route and the stream route are separate HTTPRoutes in this service's 
   - The `wf-workflow-dash-q` SNS subscription's filter policy on the `EventType` message attribute, scoped to exactly the 16 types of §3.1 (§3.2).
   - The real ingress idle-timeout, against which this document's 15-second heartbeat is provisional (§7, §11, §12).
   - Replica count, HPA metric, and graceful-drain behaviour on rolling deploy — this service scales on open-connection count, not request QPS (§10.3).
-- **Tender and LLM onboarding** (§1, §6) — each joins as a section of the routing file once its event types, its envelope `source` and its recipient fields are known; no code change. The event consumer needs a queue and topology routes for each before its events reach this service.
+- **Tender onboarding** (§1, §6) — joins as a section of the routing file once its event types and envelope `source` are defined, with `recipients` on every event meant for a browser; no code change. The event consumer needs a queue and topology routes before its events reach this service.
+- **LLM Ingestion events** (§1, §6) — whether Ingestion publishes events for a browser, under which `source`, and with `recipients`, is for the LLM subsystem to state.
+- **The LLM subsystem consumer's namespace** (§3.2) — the platform team sets it; the authorization policy and the NetworkPolicy carry a placeholder until then, and its calls are refused meanwhile.
 - **Broadcast connection-count impact is unmeasured** — a `tenant_admin` connection now live-tails N+1 (or more) Valkey Streams per open SSE connection instead of 1; the existing `sse:conncount` cap (§9.3, still counted per-connection, not per-stream-read) and the `XREAD` fan-in cost at scale haven't been load-tested against this.

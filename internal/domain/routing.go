@@ -15,20 +15,39 @@ type RoutingFile struct {
 }
 
 type ServiceRoutes struct {
-	Source string                `yaml:"source"`
-	Events map[string]EventRoute `yaml:"events"`
-}
-
-type EventRoute struct {
-	Recipients []string `yaml:"recipients"`
-	Department string   `yaml:"department,omitempty"`
+	Source       string   `yaml:"source"`
+	TenantAdmins *bool    `yaml:"tenant_admins"`
+	Events       []string `yaml:"events"`
 }
 
 type Route struct {
-	Service    string
-	EventType  string
-	Recipients []string
-	Department string
+	Service      string
+	EventType    string
+	TenantAdmins bool
+}
+
+type RecipientKind string
+
+const (
+	RecipientUser       RecipientKind = "user"
+	RecipientDepartment RecipientKind = "department"
+)
+
+const MaxRecipientIDLength = 128
+
+type Recipient struct {
+	Kind RecipientKind `json:"kind"`
+	ID   string        `json:"id"`
+}
+
+func (r Recipient) Validate() error {
+	if r.Kind != RecipientUser && r.Kind != RecipientDepartment {
+		return fmt.Errorf("kind %q must be user or department", r.Kind)
+	}
+	if r.ID == "" || len(r.ID) > MaxRecipientIDLength {
+		return fmt.Errorf("id must be 1 to %d characters", MaxRecipientIDLength)
+	}
+	return nil
 }
 
 func (r Route) StreamEventType() string {
@@ -63,16 +82,19 @@ func NewRoutingTable(f RoutingFile) (*RoutingTable, error) {
 		if err := checkService(name, svc, sources); err != nil {
 			return nil, err
 		}
-		for _, eventType := range sortedKeys(svc.Events) {
-			ev := svc.Events[eventType]
-			if err := checkEvent(name, eventType, ev); err != nil {
+		events := append([]string(nil), svc.Events...)
+		sort.Strings(events)
+		for i, eventType := range events {
+			if err := checkEvent(name, eventType); err != nil {
 				return nil, err
 			}
+			if i > 0 && events[i-1] == eventType {
+				return nil, fmt.Errorf("service %q: event type %q is listed twice", name, eventType)
+			}
 			t.routes[routeKey{svc.Source, eventType}] = Route{
-				Service:    name,
-				EventType:  eventType,
-				Recipients: append([]string(nil), ev.Recipients...),
-				Department: ev.Department,
+				Service:      name,
+				EventType:    eventType,
+				TenantAdmins: *svc.TenantAdmins,
 			}
 			t.services[name] = append(t.services[name], eventType)
 		}
@@ -91,31 +113,21 @@ func checkService(name string, svc ServiceRoutes, sources map[string]string) err
 		return fmt.Errorf("source %q is used by two services (%s, %s)", svc.Source, other, name)
 	}
 	sources[svc.Source] = name
+	if svc.TenantAdmins == nil {
+		return fmt.Errorf("service %q: tenant_admins is required", name)
+	}
 	if len(svc.Events) == 0 {
 		return fmt.Errorf("service %q: at least one event is required", name)
-	}
-	if _, empty := svc.Events[""]; empty {
-		return fmt.Errorf("service %q: an event type is empty", name)
 	}
 	return nil
 }
 
-func checkEvent(service, eventType string, ev EventRoute) error {
+func checkEvent(service, eventType string) error {
+	if eventType == "" {
+		return fmt.Errorf("service %q: an event type is empty", service)
+	}
 	if !eventTypePattern.MatchString(eventType) {
 		return fmt.Errorf("service %q: event type %q must be letters, digits, dots, dashes and underscores", service, eventType)
-	}
-	if len(ev.Recipients) == 0 {
-		return fmt.Errorf("service %q event %q: at least one recipient field is required", service, eventType)
-	}
-	seen := map[string]bool{}
-	for _, field := range ev.Recipients {
-		if field == "" {
-			return fmt.Errorf("service %q event %q: a recipient field is empty", service, eventType)
-		}
-		if seen[field] {
-			return fmt.Errorf("service %q event %q: recipient field %q is listed twice", service, eventType, field)
-		}
-		seen[field] = true
 	}
 	return nil
 }

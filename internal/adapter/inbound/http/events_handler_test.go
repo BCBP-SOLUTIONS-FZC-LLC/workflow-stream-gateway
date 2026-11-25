@@ -87,7 +87,7 @@ const validTaskCreatedEnvelope = `{
 	"source": "workflow-execution-svc",
 	"tenant_id": "tenant-a",
 	"time": "2026-08-21T10:00:00Z",
-	"data": {"assignee_user_ids": ["u1", "u2"]}
+	"data": {"recipients": [{"kind": "user", "id": "u1"}, {"kind": "user", "id": "u2"}]}
 }`
 
 func TestEventsHandler_Ingest_KnownTypeSuccess(t *testing.T) {
@@ -157,7 +157,7 @@ func TestEventsHandler_Ingest_KnownTypeInvalidPayloadReturns400(t *testing.T) {
 
 	body := `{
 		"id": "1", "type": "WorkflowTaskCreated", "source": "workflow-execution-svc",
-		"time": "2026-08-21T10:00:00Z", "data": {"assignee_user_ids": 7}
+		"time": "2026-08-21T10:00:00Z", "data": {"recipients": [{"kind": "group", "id": "g1"}]}
 	}`
 	rec := postEvent(r, body)
 
@@ -181,7 +181,7 @@ func TestEventsHandler_Ingest_ReassignedFansOutToTwo(t *testing.T) {
 	body := `{
 		"id": "1", "type": "WorkflowTaskReassigned", "source": "workflow-execution-svc",
 		"time": "2026-08-21T10:00:00Z", "tenant_id": "tenant-a",
-		"data": {"old_user_id": "old-1", "new_user_id": "new-1", "assignee_user_ids": ["new-1"]}
+		"data": {"recipients": [{"kind": "user", "id": "old-1"}, {"kind": "user", "id": "new-1"}]}
 	}`
 	rec := postEvent(r, body)
 

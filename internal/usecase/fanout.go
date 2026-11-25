@@ -14,11 +14,11 @@ var ErrUnknownEventType = errors.New("unknown event type")
 var ErrInvalidPayload = errors.New("event payload does not match expected schema for its type")
 
 type target struct {
-	recipients   []string
-	departmentID string
+	users       []string
+	departments []string
 }
 
-func resolveTarget(route domain.Route, payload []byte) (target, error) {
+func resolveTarget(payload []byte) (target, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		return target{}, fmt.Errorf("%w: %v", ErrInvalidPayload, err)
@@ -26,48 +26,34 @@ func resolveTarget(route domain.Route, payload []byte) (target, error) {
 	if fields == nil {
 		return target{}, fmt.Errorf("%w: the payload must be a JSON object", ErrInvalidPayload)
 	}
-	var t target
-	for _, name := range route.Recipients {
-		ids, err := userIDs(fields[name])
-		if err != nil {
-			return target{}, fmt.Errorf("%w: field %s: %v", ErrInvalidPayload, name, err)
-		}
-		t.recipients = append(t.recipients, ids...)
+	raw := fields["recipients"]
+	if len(raw) == 0 || string(raw) == "null" {
+		return target{}, nil
 	}
-	if route.Department != "" {
-		dept, err := optionalString(fields[route.Department])
-		if err != nil {
-			return target{}, fmt.Errorf("%w: field %s: %v", ErrInvalidPayload, route.Department, err)
+	var entries []*domain.Recipient
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return target{}, fmt.Errorf("%w: recipients must be a list of {kind, id}: %v", ErrInvalidPayload, err)
+	}
+	var t target
+	seen := map[domain.Recipient]bool{}
+	for i, entry := range entries {
+		if entry == nil {
+			return target{}, fmt.Errorf("%w: recipients[%d] must be an object", ErrInvalidPayload, i)
 		}
-		t.departmentID = dept
+		if err := entry.Validate(); err != nil {
+			return target{}, fmt.Errorf("%w: recipients[%d]: %v", ErrInvalidPayload, i, err)
+		}
+		if seen[*entry] {
+			continue
+		}
+		seen[*entry] = true
+		if entry.Kind == domain.RecipientUser {
+			t.users = append(t.users, entry.ID)
+		} else {
+			t.departments = append(t.departments, entry.ID)
+		}
 	}
 	return t, nil
-}
-
-func userIDs(raw json.RawMessage) ([]string, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
-	}
-	var one string
-	if err := json.Unmarshal(raw, &one); err == nil {
-		return []string{one}, nil
-	}
-	var many []string
-	if err := json.Unmarshal(raw, &many); err != nil {
-		return nil, errors.New("must be a user ID or an array of user IDs")
-	}
-	return many, nil
-}
-
-func optionalString(raw json.RawMessage) (string, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return "", nil
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return "", errors.New("must be a string")
-	}
-	return s, nil
 }
 
 type EventStreamStore interface {
@@ -99,26 +85,25 @@ func (s *FanoutService) Ingest(ctx context.Context, in IngestInput) (string, err
 		return "", ErrUnknownEventType
 	}
 	name := route.StreamEventType()
-	t, err := resolveTarget(route, in.Payload)
+	t, err := resolveTarget(in.Payload)
 	if err != nil {
 		return name, err
 	}
 
-	for _, userID := range t.recipients {
-		if userID == "" {
-			continue
-		}
+	for _, userID := range t.users {
 		if err := s.store.AppendEvent(ctx, in.TenantID, userID, name, in.RawEnvelope); err != nil {
 			return name, fmt.Errorf("append event: %w", err)
 		}
 	}
 
-	if err := s.store.AppendBroadcastEvent(ctx, in.TenantID, name, in.RawEnvelope); err != nil {
-		return name, fmt.Errorf("append broadcast event: %w", err)
+	if route.TenantAdmins {
+		if err := s.store.AppendBroadcastEvent(ctx, in.TenantID, name, in.RawEnvelope); err != nil {
+			return name, fmt.Errorf("append broadcast event: %w", err)
+		}
 	}
 
-	if t.departmentID != "" {
-		if err := s.store.AppendDepartmentEvent(ctx, in.TenantID, t.departmentID, name, in.RawEnvelope); err != nil {
+	for _, departmentID := range t.departments {
+		if err := s.store.AppendDepartmentEvent(ctx, in.TenantID, departmentID, name, in.RawEnvelope); err != nil {
 			return name, fmt.Errorf("append department event: %w", err)
 		}
 	}

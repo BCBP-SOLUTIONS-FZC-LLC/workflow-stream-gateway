@@ -64,12 +64,18 @@ func TestHelmRouting_TheRenderedFileMatchesTheShippedOneUnderTheSameRules(t *tes
 	shipped, err := routingfile.Load("../../config/routing.yaml")
 	require.NoError(t, err)
 
-	require.Equal(t, shipped.EventTypes("workflow"), chart.EventTypes("workflow"))
-	for _, eventType := range shipped.EventTypes("workflow") {
-		want, _ := shipped.Lookup("workflow-execution-svc", eventType)
-		got, ok := chart.Lookup("workflow-execution-svc", eventType)
-		require.True(t, ok, eventType)
-		assert.Equal(t, want, got, eventType)
+	for service, source := range map[string]string{
+		"workflow": "workflow-execution-svc",
+		"llm":      "llm-retrieval-generation",
+	} {
+		require.NotEmpty(t, shipped.EventTypes(service), service)
+		require.Equal(t, shipped.EventTypes(service), chart.EventTypes(service), service)
+		for _, eventType := range shipped.EventTypes(service) {
+			want, _ := shipped.Lookup(source, eventType)
+			got, ok := chart.Lookup(source, eventType)
+			require.True(t, ok, eventType)
+			assert.Equal(t, want, got, eventType)
+		}
 	}
 }
 

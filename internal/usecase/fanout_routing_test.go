@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,15 +13,12 @@ import (
 
 func twoServiceTable(t *testing.T) *domain.RoutingTable {
 	t.Helper()
+	yes, no := true, false
 	table, err := domain.NewRoutingTable(domain.RoutingFile{
 		Version: 1,
 		Services: map[string]domain.ServiceRoutes{
-			"workflow": {Source: workflowSource, Events: map[string]domain.EventRoute{
-				"Shared": {Recipients: []string{"assignee_user_ids"}, Department: "department_id"},
-			}},
-			"tender": {Source: "tender-svc", Events: map[string]domain.EventRoute{
-				"Shared": {Recipients: []string{"owner_user_id"}},
-			}},
+			"workflow": {Source: workflowSource, TenantAdmins: &yes, Events: []string{"Shared"}},
+			"llm":      {Source: llmSource, TenantAdmins: &no, Events: []string{"Shared"}},
 		},
 	})
 	require.NoError(t, err)
@@ -28,19 +26,18 @@ func twoServiceTable(t *testing.T) *domain.RoutingTable {
 }
 
 func TestFanoutService_Ingest_TheSameTypeUnderTwoServicesRoutesBySource(t *testing.T) {
-	store := &fakeEventStore{}
-	svc := NewFanoutService(store, twoServiceTable(t))
-	payload := []byte(`{"assignee_user_ids":["a1"],"owner_user_id":"o1","department_id":"dept-a"}`)
+	payload := recipients(users("u1"), dept("dept-a"))
 
-	name, err := svc.Ingest(context.Background(), IngestInput{Source: "tender-svc", EventType: "Shared", TenantID: "t", Payload: payload})
+	store := &fakeEventStore{}
+	name, err := NewFanoutService(store, twoServiceTable(t)).Ingest(context.Background(),
+		IngestInput{Source: llmSource, EventType: "Shared", TenantID: "t", Payload: payload})
 
 	require.NoError(t, err)
-	assert.Equal(t, "tender.Shared", name)
+	assert.Equal(t, "llm.Shared", name)
 	require.Len(t, store.appended, 1)
-	assert.Equal(t, "o1", store.appended[0].userID, "the tender entry names owner_user_id")
-	assert.Equal(t, "tender.Shared", store.appended[0].eventType)
-	assert.Equal(t, "tender.Shared", store.broadcast[0].eventType)
-	assert.Empty(t, store.department, "the tender entry names no department field")
+	assert.Equal(t, "llm.Shared", store.appended[0].eventType)
+	assert.Empty(t, store.broadcast, "the llm section does not reach tenant administrators")
+	require.Len(t, store.department, 1)
 
 	store = &fakeEventStore{}
 	name, err = NewFanoutService(store, twoServiceTable(t)).Ingest(context.Background(),
@@ -48,9 +45,8 @@ func TestFanoutService_Ingest_TheSameTypeUnderTwoServicesRoutesBySource(t *testi
 
 	require.NoError(t, err)
 	assert.Equal(t, "workflow.Shared", name)
-	assert.Equal(t, "a1", store.appended[0].userID)
-	require.Len(t, store.department, 1)
-	assert.Equal(t, "workflow.Shared", store.department[0].eventType)
+	require.Len(t, store.broadcast, 1)
+	assert.Equal(t, "workflow.Shared", store.broadcast[0].eventType)
 }
 
 func TestFanoutService_Ingest_ATypeUnderAnotherSourceIsUnknown(t *testing.T) {
@@ -65,16 +61,31 @@ func TestFanoutService_Ingest_ATypeUnderAnotherSourceIsUnknown(t *testing.T) {
 	assert.Empty(t, store.broadcast)
 }
 
-func TestFanoutService_Ingest_ReadsARecipientFieldAsOneIDOrAnArray(t *testing.T) {
+func TestFanoutService_Ingest_ReadsTheRecipientList(t *testing.T) {
 	for name, tc := range map[string]struct {
-		payload string
-		want    []string
+		payload   string
+		wantUsers []string
+		wantDepts []string
 	}{
-		"one ID":            {`{"assignee_user_ids":"u1"}`, []string{"u1"}},
-		"array":             {`{"assignee_user_ids":["u1","u2"]}`, []string{"u1", "u2"}},
-		"null":              {`{"assignee_user_ids":null}`, nil},
-		"missing":           {`{}`, nil},
-		"empty in an array": {`{"assignee_user_ids":["","u2"]}`, []string{"u2"}},
+		"users and departments": {
+			`{"recipients":[{"kind":"user","id":"u1"},{"kind":"department","id":"d1"},{"kind":"user","id":"u2"},{"kind":"department","id":"d2"}]}`,
+			[]string{"u1", "u2"}, []string{"d1", "d2"},
+		},
+		"repeats are written once": {
+			`{"recipients":[{"kind":"user","id":"u1"},{"kind":"user","id":"u1"},{"kind":"department","id":"d1"},{"kind":"department","id":"d1"}]}`,
+			[]string{"u1"}, []string{"d1"},
+		},
+		"a user and a department with the same id are both written": {
+			`{"recipients":[{"kind":"user","id":"x"},{"kind":"department","id":"x"}]}`,
+			[]string{"x"}, []string{"x"},
+		},
+		"extra entry fields are ignored": {
+			`{"recipients":[{"kind":"user","id":"u1","label":"Ann"}]}`,
+			[]string{"u1"}, nil,
+		},
+		"empty list": {`{"recipients":[]}`, nil, nil},
+		"null":       {`{"recipients":null}`, nil, nil},
+		"missing":    {`{"other":1}`, nil, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &fakeEventStore{}
@@ -83,11 +94,15 @@ func TestFanoutService_Ingest_ReadsARecipientFieldAsOneIDOrAnArray(t *testing.T)
 				IngestInput{Source: workflowSource, EventType: eventTaskCreated, TenantID: "t", Payload: []byte(tc.payload)})
 
 			require.NoError(t, err)
-			var got []string
+			var gotUsers, gotDepts []string
 			for _, e := range store.appended {
-				got = append(got, e.userID)
+				gotUsers = append(gotUsers, e.userID)
 			}
-			assert.Equal(t, tc.want, got)
+			for _, e := range store.department {
+				gotDepts = append(gotDepts, e.departmentID)
+			}
+			assert.Equal(t, tc.wantUsers, gotUsers)
+			assert.Equal(t, tc.wantDepts, gotDepts)
 			assert.Len(t, store.broadcast, 1)
 		})
 	}
@@ -95,12 +110,21 @@ func TestFanoutService_Ingest_ReadsARecipientFieldAsOneIDOrAnArray(t *testing.T)
 
 func TestFanoutService_Ingest_RefusesAPayloadOfTheWrongShape(t *testing.T) {
 	for name, payload := range map[string]string{
-		"not an object":            `["u1"]`,
-		"null":                     `null`,
-		"not JSON":                 `{`,
-		"recipient is a number":    `{"assignee_user_ids":7}`,
-		"recipient array of mixed": `{"assignee_user_ids":["u1",2]}`,
-		"department is a number":   `{"assignee_user_ids":["u1"],"department_id":3}`,
+		"not an object":          `["u1"]`,
+		"null":                   `null`,
+		"not JSON":               `{`,
+		"recipients is a number": `{"recipients":7}`,
+		"recipients is a map":    `{"recipients":{"kind":"user","id":"u1"}}`,
+		"entry is a string":      `{"recipients":["u1"]}`,
+		"entry is null":          `{"recipients":[null]}`,
+		"kind missing":           `{"recipients":[{"id":"u1"}]}`,
+		"kind unknown":           `{"recipients":[{"kind":"group","id":"u1"}]}`,
+		"kind is a number":       `{"recipients":[{"kind":1,"id":"u1"}]}`,
+		"id missing":             `{"recipients":[{"kind":"user"}]}`,
+		"id empty":               `{"recipients":[{"kind":"user","id":""}]}`,
+		"id is a number":         `{"recipients":[{"kind":"user","id":7}]}`,
+		"id over 128":            `{"recipients":[{"kind":"user","id":"` + strings.Repeat("a", 129) + `"}]}`,
+		"one bad among good":     `{"recipients":[{"kind":"user","id":"u1"},{"kind":"team","id":"t1"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &fakeEventStore{}
@@ -111,26 +135,7 @@ func TestFanoutService_Ingest_RefusesAPayloadOfTheWrongShape(t *testing.T) {
 			assert.ErrorIs(t, err, ErrInvalidPayload)
 			assert.Empty(t, store.appended, "nothing is written for a payload that does not decode")
 			assert.Empty(t, store.broadcast)
-		})
-	}
-}
-
-func TestFanoutService_Ingest_AReassignmentWithNoOldAssigneeReachesOnlyTheNewOne(t *testing.T) {
-	for name, payload := range map[string]string{
-		"missing": `{"new_user_id":"new-1","department_id":"dept-a"}`,
-		"null":    `{"old_user_id":null,"new_user_id":"new-1","department_id":"dept-a"}`,
-		"empty":   `{"old_user_id":"","new_user_id":"new-1","department_id":"dept-a"}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			store := &fakeEventStore{}
-
-			_, err := NewFanoutService(store, workflowTable(t)).Ingest(context.Background(),
-				IngestInput{Source: workflowSource, EventType: eventTaskReassigned, TenantID: "t", Payload: []byte(payload)})
-
-			require.NoError(t, err)
-			require.Len(t, store.appended, 1)
-			assert.Equal(t, "new-1", store.appended[0].userID)
-			assert.Len(t, store.department, 1)
+			assert.Empty(t, store.department)
 		})
 	}
 }

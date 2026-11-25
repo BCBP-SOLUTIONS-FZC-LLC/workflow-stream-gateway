@@ -1,28 +1,28 @@
 package domain
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 func validRoutingFile() RoutingFile {
 	return RoutingFile{
 		Version: 1,
 		Services: map[string]ServiceRoutes{
 			"workflow": {
-				Source: "workflow-execution-svc",
-				Events: map[string]EventRoute{
-					"WorkflowTaskCreated":    {Recipients: []string{"assignee_user_ids"}, Department: "department_id"},
-					"WorkflowInstancePaused": {Recipients: []string{"started_by_user_id"}},
-				},
+				Source:       "workflow-execution-svc",
+				TenantAdmins: boolPtr(true),
+				Events:       []string{"WorkflowTaskCreated", "WorkflowInstancePaused"},
 			},
-			"tender": {
-				Source: "tender-svc",
-				Events: map[string]EventRoute{
-					"WorkflowTaskCreated": {Recipients: []string{"owner_user_id"}},
-				},
+			"llm": {
+				Source:       "llm-retrieval-generation",
+				TenantAdmins: boolPtr(false),
+				Events:       []string{"WorkflowTaskCreated", "GenerationProgressed"},
 			},
 		},
 	}
@@ -35,15 +35,14 @@ func TestNewRoutingTable_LooksUpByServiceSourceAndEventType(t *testing.T) {
 	route, ok := table.Lookup("workflow-execution-svc", "WorkflowTaskCreated")
 	require.True(t, ok)
 	assert.Equal(t, "workflow", route.Service)
-	assert.Equal(t, []string{"assignee_user_ids"}, route.Recipients)
-	assert.Equal(t, "department_id", route.Department)
+	assert.True(t, route.TenantAdmins)
 	assert.Equal(t, "workflow.WorkflowTaskCreated", route.StreamEventType())
 
-	other, ok := table.Lookup("tender-svc", "WorkflowTaskCreated")
+	other, ok := table.Lookup("llm-retrieval-generation", "WorkflowTaskCreated")
 	require.True(t, ok, "the same type name under another service is its own route")
-	assert.Equal(t, "tender", other.Service)
-	assert.Equal(t, []string{"owner_user_id"}, other.Recipients)
-	assert.Equal(t, "tender.WorkflowTaskCreated", other.StreamEventType())
+	assert.Equal(t, "llm", other.Service)
+	assert.False(t, other.TenantAdmins)
+	assert.Equal(t, "llm.WorkflowTaskCreated", other.StreamEventType())
 }
 
 func TestNewRoutingTable_AnUnlistedPairIsUnknown(t *testing.T) {
@@ -52,7 +51,7 @@ func TestNewRoutingTable_AnUnlistedPairIsUnknown(t *testing.T) {
 
 	for _, pair := range [][2]string{
 		{"workflow-execution-svc", "WorkflowInstanceStarted"},
-		{"tender-svc", "WorkflowInstancePaused"},
+		{"llm-retrieval-generation", "WorkflowInstancePaused"},
 		{"unknown-svc", "WorkflowTaskCreated"},
 		{"", ""},
 	} {
@@ -66,7 +65,7 @@ func TestNewRoutingTable_ListsTheEventTypesOfAService(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"WorkflowInstancePaused", "WorkflowTaskCreated"}, table.EventTypes("workflow"))
-	assert.Empty(t, table.EventTypes("llm"))
+	assert.Empty(t, table.EventTypes("tender"))
 }
 
 func TestNewRoutingTable_RefusesABrokenFile(t *testing.T) {
@@ -77,41 +76,48 @@ func TestNewRoutingTable_RefusesABrokenFile(t *testing.T) {
 		"version 0":       {func(f *RoutingFile) { f.Version = 0 }, "version must be 1"},
 		"version 2":       {func(f *RoutingFile) { f.Version = 2 }, "version must be 1"},
 		"no services":     {func(f *RoutingFile) { f.Services = nil }, "at least one service"},
-		"uppercase name":  {func(f *RoutingFile) { f.Services["Tender"] = f.Services["tender"]; delete(f.Services, "tender") }, `service "Tender"`},
-		"name with a dot": {func(f *RoutingFile) { f.Services["ten.der"] = f.Services["tender"]; delete(f.Services, "tender") }, `service "ten.der"`},
+		"uppercase name":  {func(f *RoutingFile) { f.Services["Llm"] = f.Services["llm"]; delete(f.Services, "llm") }, `service "Llm"`},
+		"name with a dot": {func(f *RoutingFile) { f.Services["l.lm"] = f.Services["llm"]; delete(f.Services, "llm") }, `service "l.lm"`},
 		"empty source": {func(f *RoutingFile) {
-			s := f.Services["tender"]
+			s := f.Services["llm"]
 			s.Source = ""
-			f.Services["tender"] = s
-		}, `service "tender": source is required`},
+			f.Services["llm"] = s
+		}, `service "llm": source is required`},
 		"shared source": {func(f *RoutingFile) {
-			s := f.Services["tender"]
+			s := f.Services["llm"]
 			s.Source = "workflow-execution-svc"
-			f.Services["tender"] = s
+			f.Services["llm"] = s
 		}, `source "workflow-execution-svc" is used by two services`},
+		"no tenant_admins": {func(f *RoutingFile) {
+			s := f.Services["llm"]
+			s.TenantAdmins = nil
+			f.Services["llm"] = s
+		}, `service "llm": tenant_admins is required`},
 		"no events": {func(f *RoutingFile) {
-			s := f.Services["tender"]
+			s := f.Services["llm"]
 			s.Events = nil
-			f.Services["tender"] = s
-		}, `service "tender": at least one event`},
+			f.Services["llm"] = s
+		}, `service "llm": at least one event`},
 		"event type with a space": {func(f *RoutingFile) {
-			f.Services["tender"].Events["Tender Awarded"] = EventRoute{Recipients: []string{"x"}}
-		}, `service "tender": event type "Tender Awarded"`},
+			s := f.Services["llm"]
+			s.Events = append(s.Events, "Generation Done")
+			f.Services["llm"] = s
+		}, `service "llm": event type "Generation Done"`},
 		"event type with a newline": {func(f *RoutingFile) {
-			f.Services["tender"].Events["TenderAwarded\ndata: x"] = EventRoute{Recipients: []string{"x"}}
-		}, `service "tender": event type`},
+			s := f.Services["llm"]
+			s.Events = append(s.Events, "GenerationDone\ndata: x")
+			f.Services["llm"] = s
+		}, `service "llm": event type`},
 		"empty event type": {func(f *RoutingFile) {
-			f.Services["tender"].Events[""] = EventRoute{Recipients: []string{"x"}}
-		}, `service "tender": an event type is empty`},
-		"no recipients": {func(f *RoutingFile) {
-			f.Services["tender"].Events["TenderAwarded"] = EventRoute{}
-		}, `"tender" event "TenderAwarded": at least one recipient field`},
-		"empty recipient field": {func(f *RoutingFile) {
-			f.Services["tender"].Events["TenderAwarded"] = EventRoute{Recipients: []string{"a", ""}}
-		}, `"tender" event "TenderAwarded": a recipient field is empty`},
-		"repeated recipient field": {func(f *RoutingFile) {
-			f.Services["tender"].Events["TenderAwarded"] = EventRoute{Recipients: []string{"a", "a"}}
-		}, `"tender" event "TenderAwarded": recipient field "a" is listed twice`},
+			s := f.Services["llm"]
+			s.Events = append(s.Events, "")
+			f.Services["llm"] = s
+		}, `service "llm": an event type is empty`},
+		"repeated event type": {func(f *RoutingFile) {
+			s := f.Services["llm"]
+			s.Events = append(s.Events, "GenerationProgressed")
+			f.Services["llm"] = s
+		}, `service "llm": event type "GenerationProgressed" is listed twice`},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -120,6 +126,34 @@ func TestNewRoutingTable_RefusesABrokenFile(t *testing.T) {
 
 			_, err := NewRoutingTable(f)
 
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+func TestRecipient_Validate(t *testing.T) {
+	cases := map[string]struct {
+		r    Recipient
+		want string
+	}{
+		"user":                {Recipient{Kind: RecipientUser, ID: "u1"}, ""},
+		"department":          {Recipient{Kind: RecipientDepartment, ID: "d1"}, ""},
+		"id of 128":           {Recipient{Kind: RecipientUser, ID: strings.Repeat("a", 128)}, ""},
+		"id of 129":           {Recipient{Kind: RecipientUser, ID: strings.Repeat("a", 129)}, "id must be 1 to 128 characters"},
+		"empty id":            {Recipient{Kind: RecipientUser, ID: ""}, "id must be 1 to 128 characters"},
+		"missing kind":        {Recipient{ID: "u1"}, `kind "" must be user or department`},
+		"other kind":          {Recipient{Kind: "group", ID: "u1"}, `kind "group" must be user or department`},
+		"kind in other cases": {Recipient{Kind: "User", ID: "u1"}, `kind "User" must be user or department`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := tc.r.Validate()
+
+			if tc.want == "" {
+				assert.NoError(t, err)
+				return
+			}
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 		})

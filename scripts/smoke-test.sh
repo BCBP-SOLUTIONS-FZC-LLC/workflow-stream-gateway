@@ -64,7 +64,7 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/v1/internal/e
 [ "$status" = 401 ] || [ "$status" = 403 ] || { echo "smoke: the internal route answered $status without the system caller identity"; exit 1; }
 
 id=$(uuidgen | tr '[:upper:]' '[:lower:]')
-event=$(printf '{"id":"%s","type":"WorkflowTaskCreated","source":"workflow-execution-svc","time":"%s","tenant_id":"%s","data":{"assignee_user_ids":["%s"],"department_id":"%s"}}' \
+event=$(printf '{"id":"%s","type":"WorkflowTaskCreated","source":"workflow-execution-svc","time":"%s","tenant_id":"%s","data":{"recipients":[{"kind":"user","id":"%s"},{"kind":"department","id":"%s"}]}}' \
   "$id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tenant" "$user" "$(uuidgen | tr '[:upper:]' '[:lower:]')")
 status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/v1/internal/events" \
   -H "x-user-id: iam-system" -H "x-tenant-roles: iam-system" -H "Content-Type: application/json" -d "$event")

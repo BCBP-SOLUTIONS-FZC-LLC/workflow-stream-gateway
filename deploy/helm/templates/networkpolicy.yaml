@@ -6,7 +6,9 @@
 # This service's only legitimate callers are the gateway (ticket-mint
 # today; the SSE stream route once its own JWT carve-out lands, LLD §5.2)
 # and event_consumer (POST /api/v1/internal/events, LLD §3.2) — no other
-# same-namespace pod has any reason to reach this service at all.
+# same-namespace pod has any reason to reach this service at all. A caller in
+# another namespace (the LLM subsystem's consumer) is named in
+# networkPolicy.otherNamespaceCallers.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -52,6 +54,19 @@ spec:
       ports:
         - port: {{ .Values.service.port }}
           protocol: TCP
+
+    {{- range .Values.networkPolicy.otherNamespaceCallers }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .namespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .podSelector | nindent 14 }}
+      ports:
+        - port: {{ $.Values.service.port }}
+          protocol: TCP
+    {{- end }}
 
     # Allow Prometheus to scrape /metrics — restricted to the observability
     # namespace. Metrics live on a SEPARATE port from the API, so this

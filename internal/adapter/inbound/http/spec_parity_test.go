@@ -51,26 +51,70 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 		"docs/swagger/openapi.yaml and the router must list the same operations")
 }
 
-func TestAsyncAPIMessagesMatchTheShippedWorkflowRoutes(t *testing.T) {
+type asyncAPIDoc struct {
+	Channels map[string]struct {
+		Messages map[string]struct {
+			Ref string `yaml:"$ref"`
+		} `yaml:"messages"`
+	} `yaml:"channels"`
+	Components struct {
+		Messages map[string]struct {
+			Name    string `yaml:"name"`
+			Payload struct {
+				Ref string `yaml:"$ref"`
+			} `yaml:"payload"`
+		} `yaml:"messages"`
+		Schemas map[string]struct {
+			Required []string `yaml:"required"`
+		} `yaml:"schemas"`
+	} `yaml:"components"`
+}
+
+func loadAsyncAPI(t *testing.T) asyncAPIDoc {
+	t.Helper()
 	raw, err := os.ReadFile(asyncAPISpec)
 	require.NoError(t, err)
-	var doc struct {
-		Components struct {
-			Messages map[string]struct {
-				Name string `yaml:"name"`
-			} `yaml:"messages"`
-		} `yaml:"components"`
-	}
+	var doc asyncAPIDoc
 	require.NoError(t, yaml.Unmarshal(raw, &doc))
+	return doc
+}
 
-	var documented []string
-	for _, m := range doc.Components.Messages {
-		documented = append(documented, m.Name)
+func TestAsyncAPIChannelsMatchTheShippedRoutes(t *testing.T) {
+	doc := loadAsyncAPI(t)
+	routes := shippedRoutes(t)
+
+	for channel, service := range map[string]string{"wf/workflow/dash": "workflow", "llm/generation": "llm"} {
+		var documented []string
+		for name := range doc.Channels[channel].Messages {
+			documented = append(documented, name)
+		}
+		sort.Strings(documented)
+		known := routes.EventTypes(service)
+		require.NotEmpty(t, known, service)
+		assert.Equal(t, known, documented, "channel %s of api/asyncapi.yaml must list exactly the %s types config/routing.yaml routes", channel, service)
 	}
-	sort.Strings(documented)
-	known := shippedRoutes(t).EventTypes("workflow")
-	sort.Strings(known)
-	assert.Equal(t, known, documented, "api/asyncapi.yaml must document exactly the workflow event types config/routing.yaml routes")
+
+	var all []string
+	for _, service := range []string{"workflow", "llm"} {
+		all = append(all, routes.EventTypes(service)...)
+	}
+	sort.Strings(all)
+	var messages []string
+	for _, m := range doc.Components.Messages {
+		messages = append(messages, m.Name)
+	}
+	sort.Strings(messages)
+	assert.Equal(t, all, messages, "api/asyncapi.yaml must document a message for exactly the routed types")
+}
+
+func TestAsyncAPIEveryMessageCarriesTheRecipientList(t *testing.T) {
+	doc := loadAsyncAPI(t)
+
+	for key, m := range doc.Components.Messages {
+		assert.Equal(t, "#/components/schemas/RoutedPayload", m.Payload.Ref, key)
+	}
+	assert.Contains(t, doc.Components.Schemas["RoutedPayload"].Required, "recipients")
+	assert.ElementsMatch(t, []string{"kind", "id"}, doc.Components.Schemas["Recipient"].Required)
 }
 
 func TestTicketMintDocumentsTheStatusItAnswersWithoutIdentityHeaders(t *testing.T) {

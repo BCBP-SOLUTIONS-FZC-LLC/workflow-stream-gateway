@@ -136,7 +136,10 @@ type wantRule struct {
 
 func defaultInternalRules() []wantRule {
 	return []wantRule{
-		{"events", []string{principal("workflow-app", "workflow-events-consumer")}, []string{"/api/v1/internal/events"}},
+		{"events", []string{
+			principal("workflow-app", "workflow-events-consumer"),
+			principal("llm", "llm-retrieval-generation"),
+		}, []string{"/api/v1/internal/events"}},
 	}
 }
 
