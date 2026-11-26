@@ -8,6 +8,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-11-26
+
 ### Fixed
 
 - Live delivery no longer skips events: each read starts after the entry last delivered on each stream (beginning from the newest entry at connect, the resume cursor or the last backfilled entry), instead of waiting only for entries newer than the read itself, so an event written while a frame was being sent is delivered.
