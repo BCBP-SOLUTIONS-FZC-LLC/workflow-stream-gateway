@@ -208,12 +208,16 @@ components:
         dataschema:
           type: string
           nullable: true
+          description: Schema-registry version id. When set, `data` is a base64 string of a Glue-framed JSON payload; the service removes the 18-byte header and stores the envelope with plain JSON `data` and no `dataschema` (§3.2 of the LLD).
         time:
           type: string
           format: date-time
         data:
-          type: object
-          description: Event-type-specific payload; opaque to this service beyond its `recipients` list (§6 of the LLD).
+          oneOf:
+            - type: object
+            - type: string
+              format: byte
+          description: Event-type-specific payload; opaque to this service beyond its `recipients` list (§6 of the LLD). A base64 Glue frame when `dataschema` is set.
 
 paths:
   /healthz:
