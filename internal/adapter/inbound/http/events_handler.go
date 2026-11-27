@@ -1,8 +1,11 @@
 package http
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -43,6 +46,15 @@ func (h *EventsHandler) Ingest(c *gin.Context) {
 		return
 	}
 
+	if envelope.SchemaID != "" {
+		body, err = decodeGlueFramedData(c.Request.Context(), &envelope)
+		if err != nil {
+			recordEventIngest(unknownEventType, "bad_payload")
+			writeProblem(c, http.StatusBadRequest, "invalid-payload", err.Error())
+			return
+		}
+	}
+
 	name, err := h.fanout.Ingest(c.Request.Context(), usecase.IngestInput{
 		Source:      envelope.Source,
 		Caller:      callerFromClientCert(c.GetHeader(clientCertHeader)),
@@ -69,6 +81,28 @@ func (h *EventsHandler) Ingest(c *gin.Context) {
 		recordEventIngest(name, "ok")
 		c.Status(http.StatusOK)
 	}
+}
+
+func decodeGlueFramedData(ctx context.Context, envelope *events.Envelope[json.RawMessage]) ([]byte, error) {
+	var encoded string
+	if err := json.Unmarshal(envelope.Payload, &encoded); err != nil {
+		return nil, fmt.Errorf("data of a schema-registry event must be a base64 string: %w", err)
+	}
+	framed, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("data of a schema-registry event is not valid base64: %w", err)
+	}
+	payload, err := events.GlueDecodeCodec{}.Decode(ctx, envelope.SchemaID, framed)
+	if err != nil {
+		return nil, fmt.Errorf("data of a schema-registry event: %w", err)
+	}
+	envelope.Payload = payload
+	envelope.SchemaID = ""
+	rewritten, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("re-encode the decoded envelope: %w", err)
+	}
+	return rewritten, nil
 }
 
 func recordCallerRejection() {

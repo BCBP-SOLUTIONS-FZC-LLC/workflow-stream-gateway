@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-11-26
+
+### Fixed
+
+- Ingest decodes schema-registry payloads. Execution Service publishes every event with `data` as a base64 Glue frame and `dataschema` set; ingest refused each one with `400`, so the consumer dead-lettered it and no task or instance event reached a dashboard. The handler now removes the Glue header and stores the envelope with plain JSON `data` and no `dataschema`, and refuses a frame it cannot decode with `400`.
+
 ## [0.1.0] — 2026-11-26
 
 ### Fixed

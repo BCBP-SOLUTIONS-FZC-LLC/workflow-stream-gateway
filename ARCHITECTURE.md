@@ -21,7 +21,7 @@ domain ← usecase ← adapter
 
 1. The browser mints a ticket: the router checks the gateway identity, the use case applies the per-user rate limit and stores the identity snapshot under a random token.
 2. The browser opens `GET /api/v1/stream?ticket=…`. The handler validates the ticket, acquires a slot in the per-user connection counter and serves frames until the client disconnects. Each wake-up of the loop refreshes the counter, and the slot is released when the connection ends.
-3. A publisher's consumer (the Workflow-Events Consumer, or the LLM subsystem's own) forwards an event to `POST /api/v1/internal/events`. The use case looks up the routing file's section by source and type, reads the payload's `recipients` list (users and departments), and appends the raw envelope to each named user's and department's Stream, and to the tenant-wide Stream when the section reaches administrators, trimmed to the retention window.
+3. A publisher's consumer (the Workflow-Events Consumer, or the LLM subsystem's own) forwards an event to `POST /api/v1/internal/events`. The handler removes the Glue header from a schema-registry payload (an envelope with `dataschema`), so `data` is plain JSON. The use case looks up the routing file's section by source and type, reads the payload's `recipients` list (users and departments), and appends the envelope to each named user's and department's Stream, and to the tenant-wide Stream when the section reaches administrators, trimmed to the retention window.
 4. A reconnect carries a cursor of one position per tailed Stream. A position older than the retention window yields a resync marker.
 
 ## Valkey keys
